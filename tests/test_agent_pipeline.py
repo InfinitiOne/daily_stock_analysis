@@ -2897,11 +2897,11 @@ class TestSkillActivation(unittest.TestCase):
         self.assertEqual(count, len(_builtin_strategy_names()), "Should load all built-in strategies from YAML")
 
         default_ids = get_default_active_skill_ids(skill_manager.list_skills())
-        self.assertEqual(default_ids, ["bull_trend"])
+        self.assertEqual(default_ids, ["jeac_enterprise_v5"])
         skill_manager.activate(default_ids)
 
         active = skill_manager.list_active_skills()
-        self.assertEqual([skill.name for skill in active], ["bull_trend"])
+        self.assertEqual([skill.name for skill in active], ["jeac_enterprise_v5"])
 
     def test_sentiment_score_parsed_from_dashboard(self):
         """Verify _agent_result_to_analysis_result handles non-numeric sentiment_score."""
