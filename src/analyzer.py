@@ -13,6 +13,7 @@ A股自选股智能分析系统 - AI分析层
 import json
 import logging
 import math
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -2343,6 +2344,39 @@ class GeminiAnalyzer:
             ),
         )
 
+    @staticmethod
+    def _is_compact_prompt_profile() -> bool:
+        """Return whether the token-efficient JEAC prompt profile is enabled."""
+        return os.getenv("ANALYSIS_PROMPT_PROFILE", "compact").strip().lower() == "compact"
+
+    @staticmethod
+    def _get_analysis_max_output_tokens() -> int:
+        """Bound output size so one stock cannot exhaust the LLM daily quota."""
+        try:
+            configured = int(os.getenv("ANALYSIS_MAX_OUTPUT_TOKENS", "2400"))
+        except (TypeError, ValueError):
+            configured = 2400
+        return max(800, min(configured, 8192))
+
+    def _get_compact_analysis_system_prompt(self, report_language: str, stock_code: str) -> str:
+        """Core JEAC rules for the compact production profile."""
+        lang = normalize_report_language(report_language)
+        if self._is_compact_prompt_profile():
+            return self._get_compact_analysis_system_prompt(lang, stock_code)
+        market_role = get_market_role(stock_code, lang)
+        market_guidelines = get_market_guidelines(stock_code, lang)
+        language_rule = {
+            "en": "Write every human-readable value in English.",
+            "ko": "Write every human-readable value in Korean.",
+        }.get(lang, "所有面向用户的文本值使用繁体中文与台湾投资用语。")
+        return f"""你是 JEAC Enterprise 5.0 投资决策分析师。{market_role}
+
+只使用输入中提供且有日期、来源或状态的证据；数据缺失时明确写“数据缺失，无法判断”，不得补造价格、法人、财报、新闻、目标价或公司名称。
+先判断趋势/Stage、价格位置、量价与风险报酬；台股有法人或营收资料时才引用。分数不等于买入：风险报酬低于 2、停损过远、资料不完整或关键条件未确认时，动作必须为 watch/hold/avoid。
+输出只能是一個有效 JSON 对象，不要 Markdown。保留输入事实，不复述 raw payload、token 或密钥。
+{market_guidelines}
+JSON 键名保持英文；decision_type 只能为 buy|hold|sell；{language_rule}"""
+
     def _get_analysis_system_prompt(self, report_language: str, stock_code: str = "") -> str:
         """Build the analyzer system prompt with output-language guidance."""
         lang = normalize_report_language(report_language)
@@ -3537,7 +3571,7 @@ class GeminiAnalyzer:
             # 设置生成配置
             generation_config = {
                 "temperature": config.llm_temperature,
-                "max_output_tokens": 8192,
+                "max_output_tokens": self._get_analysis_max_output_tokens(),
             }
 
             logger.info(f"[LLM调用] 开始调用 {model_name}...")
@@ -3671,6 +3705,56 @@ class GeminiAnalyzer:
                 report_language=report_language,
             )
     
+    def _format_compact_prompt(
+        self,
+        context: Dict[str, Any],
+        stock_name: str,
+        news_context: Optional[str],
+        report_language: str,
+        analysis_context_pack_summary: Optional[str],
+    ) -> str:
+        """Build a compact, evidence-bound JSON request for routine scheduled runs."""
+        code = context.get("code", "Unknown")
+        today = context.get("today") if isinstance(context.get("today"), dict) else {}
+        realtime = context.get("realtime") if isinstance(context.get("realtime"), dict) else {}
+        trend = context.get("trend_analysis") if isinstance(context.get("trend_analysis"), dict) else {}
+        compact_pack = (analysis_context_pack_summary or "").strip()[:1200]
+        compact_news = (news_context or "").strip()[:1600]
+        data_status = "partial/missing" if context.get("data_missing") else "available"
+        return f"""# JEAC Compact Analysis
+标的：{stock_name}（{code}）；日期：{context.get("date", "N/A")}；数据状态：{data_status}
+
+行情：收盘={today.get("close", "N/A")}；涨跌={today.get("pct_chg", "N/A")}%；量={self._format_volume(today.get("volume"))}
+技术：MA5={today.get("ma5", "N/A")}；MA10={today.get("ma10", "N/A")}；MA20={today.get("ma20", "N/A")}；趋势={trend.get("trend_status", "N/A")}；均线={trend.get("ma_alignment", context.get("ma_status", "N/A"))}；信号={trend.get("buy_signal", "N/A")}；评分={trend.get("signal_score", "N/A")}
+即时数据：价格={realtime.get("price", "N/A")}；量比={realtime.get("volume_ratio", "N/A")}；换手={realtime.get("turnover_rate", "N/A")}
+
+资料限制与状态：
+{compact_pack or "未提供额外资料；不得推测缺失资讯。"}
+
+近期期情：
+{compact_news or "无可用近期新闻。"}
+
+只输出下列 JSON（缺失数据使用“数据缺失，无法判断”，无法验证的价格点位填“N/A”）：
+{{
+  "stock_name": "{stock_name}",
+  "sentiment_score": 0,
+  "trend_prediction": "",
+  "operation_advice": "",
+  "decision_type": "hold",
+  "action": "watch",
+  "confidence_level": "低",
+  "analysis_summary": "",
+  "risk_warning": "",
+  "dashboard": {{
+    "core_conclusion": {{"one_sentence": "", "signal_type": "", "time_sensitivity": "", "position_advice": {{"no_position": "", "has_position": ""}}}},
+    "data_perspective": {{"trend_status": {{"ma_alignment": "", "is_bullish": false, "trend_score": 0}}, "price_position": {{"current_price": "N/A", "support_level": "N/A", "resistance_level": "N/A"}}, "volume_analysis": {{"volume_status": "", "volume_meaning": ""}}}},
+    "intelligence": {{"latest_news": "", "risk_alerts": [], "positive_catalysts": [], "earnings_outlook": "", "sentiment_summary": ""}},
+    "battle_plan": {{"sniper_points": {{"ideal_buy": "N/A", "secondary_buy": "N/A", "stop_loss": "N/A", "take_profit": "N/A"}}, "position_strategy": {{"suggested_position": "", "entry_plan": "", "risk_control": ""}}, "action_checklist": []}},
+    "phase_decision": {{"phase_context": {{"phase": "unknown"}}, "action_window": "", "immediate_action": "", "watch_conditions": [], "next_check_time": "", "confidence_reason": "", "data_limitations": []}}
+  }}
+}}"""
+
+
     def _format_prompt(
         self, 
         context: Dict[str, Any], 
@@ -3697,6 +3781,15 @@ class GeminiAnalyzer:
         stock_name = context.get('stock_name', name)
         if not stock_name or stock_name == f'股票{code}':
             stock_name = STOCK_NAME_MAP.get(code, f'股票{code}')
+
+        if self._is_compact_prompt_profile():
+            return self._format_compact_prompt(
+                context,
+                stock_name,
+                news_context,
+                report_language,
+                analysis_context_pack_summary,
+            )
             
         today = context.get('today', {})
         unknown_text = get_unknown_text(report_language)
