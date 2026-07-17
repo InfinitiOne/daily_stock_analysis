@@ -133,6 +133,15 @@ jobs:
           LLM_PRIMARY_ENABLED: ${{ vars.LLM_PRIMARY_ENABLED || secrets.LLM_PRIMARY_ENABLED }}
           LLM_PRIMARY_EXTRA_HEADERS: ${{ vars.LLM_PRIMARY_EXTRA_HEADERS || secrets.LLM_PRIMARY_EXTRA_HEADERS }}
 
+          # Groq OpenAI-compatible channel (supports a comma-separated Secret deployment pool).
+          LLM_GROQ_PROTOCOL: ${{ vars.LLM_GROQ_PROTOCOL || secrets.LLM_GROQ_PROTOCOL }}
+          LLM_GROQ_BASE_URL: ${{ vars.LLM_GROQ_BASE_URL || secrets.LLM_GROQ_BASE_URL }}
+          LLM_GROQ_API_KEY: ${{ secrets.LLM_GROQ_API_KEY }}
+          LLM_GROQ_API_KEYS: ${{ secrets.LLM_GROQ_API_KEYS }}
+          LLM_GROQ_MODELS: ${{ vars.LLM_GROQ_MODELS || secrets.LLM_GROQ_MODELS }}
+          LLM_GROQ_ENABLED: ${{ vars.LLM_GROQ_ENABLED || secrets.LLM_GROQ_ENABLED }}
+          LLM_GROQ_EXTRA_HEADERS: ${{ vars.LLM_GROQ_EXTRA_HEADERS || secrets.LLM_GROQ_EXTRA_HEADERS }}
+
           LLM_SECONDARY_PROTOCOL: ${{ vars.LLM_SECONDARY_PROTOCOL || secrets.LLM_SECONDARY_PROTOCOL }}
           LLM_SECONDARY_BASE_URL: ${{ vars.LLM_SECONDARY_BASE_URL || secrets.LLM_SECONDARY_BASE_URL }}
           LLM_SECONDARY_API_KEY: ${{ secrets.LLM_SECONDARY_API_KEY }}
