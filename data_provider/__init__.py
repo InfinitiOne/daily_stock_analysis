@@ -35,6 +35,7 @@ from .efinance_fetcher import EfinanceFetcher
 from .tencent_fetcher import TencentFetcher
 from .akshare_fetcher import AkshareFetcher, is_hk_stock_code
 from .tushare_fetcher import TushareFetcher
+from .fugle_fetcher import FugleFetcher
 from .pytdx_fetcher import PytdxFetcher
 from .baostock_fetcher import BaostockFetcher
 from .yfinance_fetcher import YfinanceFetcher
@@ -50,6 +51,7 @@ __all__ = [
     'TencentFetcher',
     'AkshareFetcher',
     'TushareFetcher',
+    'FugleFetcher',
     'PytdxFetcher',
     'BaostockFetcher',
     'YfinanceFetcher',

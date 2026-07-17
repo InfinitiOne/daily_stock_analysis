@@ -619,6 +619,7 @@ class DataFetcherManager:
         "AkshareFetcher": {"cn", "hk"},
         "TushareFetcher": {"cn", "hk"},
         "TickFlowFetcher": {"cn"},
+        "FugleFetcher": {"tw"},
         "PytdxFetcher": {"cn"},
         "BaostockFetcher": {"cn"},
         "YfinanceFetcher": {"cn", "hk", "us", "jp", "kr", "tw"},
@@ -1158,6 +1159,7 @@ class DataFetcherManager:
         from .akshare_fetcher import AkshareFetcher
         from .tushare_fetcher import TushareFetcher
         from .tickflow_fetcher import TickFlowFetcher
+        from .fugle_fetcher import FugleFetcher
         from .pytdx_fetcher import PytdxFetcher
         from .baostock_fetcher import BaostockFetcher
         from .yfinance_fetcher import YfinanceFetcher
@@ -1191,6 +1193,12 @@ class DataFetcherManager:
             )
         else:
             logger.debug("[data source init] skip TickFlowFetcher because TICKFLOW_API_KEY is not configured")
+
+        fugle = FugleFetcher()
+        if fugle.is_available():
+            optional_fetchers.append(fugle)
+        else:
+            logger.debug("[data source init] skip FugleFetcher because FUGLE_API_KEY is not configured")
 
         if LongbridgeFetcher.has_configured_credentials(config):
             optional_fetchers.append(LongbridgeFetcher())  # 长桥（美股/港股兜底，懒加载）
@@ -1769,9 +1777,13 @@ class DataFetcherManager:
 
         if is_jp or is_kr or is_tw:
             market_label = "日股" if is_jp else "韩股" if is_kr else "台股"
-            quote = self._try_fetcher_quote(stock_code, "YfinanceFetcher")
+            primary_source = "FugleFetcher" if is_tw else "YfinanceFetcher"
+            quote = self._try_fetcher_quote(stock_code, primary_source)
+            if quote is None and is_tw:
+                quote = self._try_fetcher_quote(stock_code, "YfinanceFetcher")
+                primary_source = "YfinanceFetcher"
             if quote is not None:
-                logger.info(f"[实时行情] {market_label} {stock_code} 成功获取 (来源: YfinanceFetcher)")
+                logger.info(f"[实时行情] {market_label} {stock_code} 成功获取 (来源: {primary_source})")
                 return self._enrich_realtime_quote(
                     quote,
                     realtime_cache_ttl=getattr(config, "realtime_cache_ttl", None),

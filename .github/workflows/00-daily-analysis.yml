@@ -260,6 +260,10 @@ jobs:
           TICKFLOW_KLINE_ADJUST: ${{ vars.TICKFLOW_KLINE_ADJUST || secrets.TICKFLOW_KLINE_ADJUST }}
           TICKFLOW_BATCH_DAILY_ENABLED: ${{ vars.TICKFLOW_BATCH_DAILY_ENABLED || secrets.TICKFLOW_BATCH_DAILY_ENABLED }}
           TICKFLOW_BATCH_SIZE: ${{ vars.TICKFLOW_BATCH_SIZE || secrets.TICKFLOW_BATCH_SIZE }}
+          # Fugle Market Data（仅台股 .TW/.TWO；未设置时自动回退到 Yahoo Finance）
+          FUGLE_API_KEY: ${{ secrets.FUGLE_API_KEY }}
+          FUGLE_PRIORITY: ${{ vars.FUGLE_PRIORITY || '0' }}
+          FUGLE_TIMEOUT_SECONDS: ${{ vars.FUGLE_TIMEOUT_SECONDS || '12' }}
           # Longbridge OpenAPI（美股/港股实时行情字段补充；不设则仅 YFinance/AkShare，无 [Longbridge] 调用）
           LONGBRIDGE_OAUTH_CLIENT_ID: ${{ vars.LONGBRIDGE_OAUTH_CLIENT_ID || secrets.LONGBRIDGE_OAUTH_CLIENT_ID }}
           LONGBRIDGE_OAUTH_TOKEN_CACHE_B64: ${{ secrets.LONGBRIDGE_OAUTH_TOKEN_CACHE_B64 }}
@@ -429,6 +433,38 @@ jobs:
 
           # 判断运行模式
           MODE="${{ github.event.inputs.mode || 'full' }}"
+
+          # 市场范围护栏：
+          # - 现有大盘复盘不支持台湾市场（.TW/.TWO）。
+          # - 不允许在仅台股清单上误用默认 A 股（cn）复盘。
+          # - 纯美股或台美混合清单会把默认复盘改为美股；台股部分会明确缺少大盘基准。
+          MARKET_REVIEW_ARG=""
+          NORMALIZED_STOCK_LIST="${STOCK_LIST^^}"
+          HAS_TW_SYMBOL=false
+          HAS_US_SYMBOL=false
+          if [[ "$NORMALIZED_STOCK_LIST" =~ \.(TW|TWO) ]]; then
+            HAS_TW_SYMBOL=true
+          fi
+          IFS=',; ' read -r -a STOCK_SYMBOLS <<< "$NORMALIZED_STOCK_LIST"
+          for STOCK_SYMBOL in "${STOCK_SYMBOLS[@]}"; do
+            if [[ "$STOCK_SYMBOL" =~ ^[A-Z][A-Z0-9.-]*$ ]] && [[ ! "$STOCK_SYMBOL" =~ \.(TW|TWO)$ ]]; then
+              HAS_US_SYMBOL=true
+              break
+            fi
+          done
+
+          if [[ "${MARKET_REVIEW_REGION,,}" == "cn" ]] && [[ "$HAS_TW_SYMBOL" == "true" ]]; then
+            if [[ "$HAS_US_SYMBOL" == "true" ]]; then
+              export MARKET_REVIEW_REGION="us"
+              echo "⚠️ 检测到台美混合清单：默认大盘复盘改为美股；台湾市场大盘复盘尚未接入，不会以 A 股数据替代。"
+            else
+              MARKET_REVIEW_ARG="--no-market-review"
+              echo "⚠️ 检测到仅台股清单：跳过默认 A 股大盘复盘，避免错误市场基准。台湾市场大盘复盘尚未接入。"
+            fi
+          elif [[ "${MARKET_REVIEW_REGION,,}" == "cn" ]] && [[ "$HAS_US_SYMBOL" == "true" ]]; then
+            export MARKET_REVIEW_REGION="us"
+            echo "ℹ️ 检测到美股清单：默认大盘复盘改为美股。"
+          fi
           
           echo "=========================================="
           echo "🚀 A股自选股智能分析系统"
@@ -436,6 +472,7 @@ jobs:
           echo "⏰ 时间: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')"
           echo "🎯 运行模式: $MODE"
           echo "📊 自选股: $STOCK_LIST"
+          echo "🌐 大盘复盘区域: $MARKET_REVIEW_REGION"
           echo "📝 报告类型: $REPORT_TYPE"
           echo ""
           echo "=========================================="
@@ -457,6 +494,7 @@ jobs:
           echo "【数据源】"
           echo "  Tushare Token: $([ -n "$TUSHARE_TOKEN" ] && echo '✅ 已配置' || echo '⚪ 未配置')"
           echo "  TickFlow:      $([ -n "$TICKFLOW_API_KEY" ] && echo '✅ 已配置' || echo '⚪ 未配置')"
+          echo "  Fugle (TW):    $([ -n "$FUGLE_API_KEY" ] && echo '✅ 已配置' || echo '⚪ 未配置；将使用 Yahoo Finance 备援')"
           if [ -n "$LONGBRIDGE_APP_KEY" ] && [ -n "$LONGBRIDGE_APP_SECRET" ] && [ -n "$LONGBRIDGE_ACCESS_TOKEN" ]; then
             echo "  Longbridge: ✅ 已配置（Legacy API Key）"
           elif [ -n "$LONGBRIDGE_OAUTH_CLIENT_ID" ] || { [ -n "$LONGBRIDGE_APP_KEY" ] && [ -z "$LONGBRIDGE_ACCESS_TOKEN" ]; }; then
@@ -507,11 +545,15 @@ jobs:
 
           # 执行分析
           if [ "$MODE" = "market-only" ]; then
+            if [ -n "$MARKET_REVIEW_ARG" ]; then
+              echo "❌ 当前清单为仅台股，且台湾市场大盘复盘尚未接入；请改用 full/stocks-only，或先配置支持的 MARKET_REVIEW_REGION。"
+              exit 2
+            fi
             python main.py --market-review $FORCE_RUN_ARG
           elif [ "$MODE" = "stocks-only" ]; then
             python main.py --no-market-review $FORCE_RUN_ARG
           else
-            python main.py $FORCE_RUN_ARG
+            python main.py $MARKET_REVIEW_ARG $FORCE_RUN_ARG
           fi
       
       - name: 上传分析报告
