@@ -3721,7 +3721,7 @@ JSON 键名保持英文；decision_type 只能为 buy|hold|sell；{language_rule
         compact_pack = (analysis_context_pack_summary or "").strip()[:1200]
         compact_news = (news_context or "").strip()[:1600]
         data_status = "partial/missing" if context.get("data_missing") else "available"
-        return f"""# JEAC Compact Analysis
+        return f'''# JEAC Compact Analysis
 标的：{stock_name}（{code}）；日期：{context.get("date", "N/A")}；数据状态：{data_status}
 
 行情：收盘={today.get("close", "N/A")}；涨跌={today.get("pct_chg", "N/A")}%；量={self._format_volume(today.get("volume"))}
@@ -3752,7 +3752,7 @@ JSON 键名保持英文；decision_type 只能为 buy|hold|sell；{language_rule
     "battle_plan": {{"sniper_points": {{"ideal_buy": "N/A", "secondary_buy": "N/A", "stop_loss": "N/A", "take_profit": "N/A"}}, "position_strategy": {{"suggested_position": "", "entry_plan": "", "risk_control": ""}}, "action_checklist": []}},
     "phase_decision": {{"phase_context": {{"phase": "unknown"}}, "action_window": "", "immediate_action": "", "watch_conditions": [], "next_check_time": "", "confidence_reason": "", "data_limitations": []}}
   }}
-}}"""
+}}'''
 
 
     def _format_prompt(
