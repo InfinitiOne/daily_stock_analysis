@@ -13,12 +13,12 @@
 
 | 用途 | 台股 | 美股 | 處理原則 |
 |---|---|---|---|
-| 日線／即時報價 | Fugle（已設定金鑰時）→ Yahoo Finance 備援 | Finnhub／Alpha Vantage／Longbridge（已設定時）→ Yahoo Finance | 不跨市場套用來源。 |
+| 日線／即時報價 | Fugle（即時優先）→ FinMind（日線次要來源）→ Yahoo Finance 備援 | Finnhub／Alpha Vantage／Longbridge（已設定時）→ Yahoo Finance | 不跨市場套用來源。 |
 | 官方公告／財報／月營收 | TWSE／TPEx／MOPS | SEC、公司 IR 與交易所公告 | 公告優先於媒體轉載。 |
 | 法人／融資券／籌碼 | TWSE／TPEx 等可驗證來源 | 依授權資料源提供情況 | 缺資料時標示，不推估。 |
 | 市場複盤 | 僅在具台股市場資料模組時產出 | 僅用相符美股市場資料 | 不得把 A 股複盤套入台股。 |
 
-Fugle 僅供台灣上市／上櫃與 ETF 之行情資料，不用於美股；它不取代 MOPS、交易所公告、法人籌碼或基本面查核。
+Fugle 僅供台灣上市／上櫃與 ETF 之行情資料，不用於美股；它不取代 MOPS、交易所公告、法人籌碼或基本面查核。FinMind 供台股日線及結構化法人、融資券、月營收與財報資料集；目前 JEAC 的自動主流程先採用其日線資料，其他資料集保留給後續報表欄位擴充。
 
 ## 3. 資料品質門檻
 
@@ -59,3 +59,10 @@ MA 使用收盤價簡單移動平均；RSI 標示週期（預設 RSI(14)）；KD
 - FUGLE_PRIORITY=0（Repository variable，可省略）使 Fugle 成為台股第一個日線來源；失敗會降級到現有 YfinanceFetcher。
 - 基本方案可用日線與盤中資料；Snapshot 與官方技術指標端點需使用 Fugle 提供該權限的方案。JEAC 的 MA／RSI／KD／MACD 仍由取得的 OHLCV 以統一口徑自行計算。
 - API 失敗、額度不足、非交易日或代碼市場不符時，日誌必須明示來源與降級結果，不可靜默把資料當成台股官方收盤資料。
+
+## 8. FinMind 在 JEAC 的角色
+
+- FINMIND_API_TOKEN 存於 GitHub Repository secret，使用 Authorization: Bearer 驗證；禁止存放登入帳密。
+- FINMIND_PRIORITY=1（Repository variable，可省略）使它成為 Fugle 失敗後的台股日線來源；它不會處理美股 ticker，也不會取代 Fugle 即時行情。
+- 已納入可延伸資料集範圍：TaiwanStockPrice、TaiwanStockInstitutionalInvestorsBuySell、TaiwanStockMarginPurchaseShortSale、TaiwanStockMonthRevenue、TaiwanStockFinancialStatements、TaiwanStockBalanceSheet、TaiwanStockCashFlowsStatement 與 TaiwanStockDividend。是否可取得取決於你的 FinMind 方案與使用額度。
+- FinMind 現階段不作為台股市場複盤的資料源；台灣大盤複盤須有相符的市場模組與來源，避免把 A 股數據套入台股。

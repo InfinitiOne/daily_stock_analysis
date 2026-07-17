@@ -620,6 +620,7 @@ class DataFetcherManager:
         "TushareFetcher": {"cn", "hk"},
         "TickFlowFetcher": {"cn"},
         "FugleFetcher": {"tw"},
+        "FinMindFetcher": {"tw"},
         "PytdxFetcher": {"cn"},
         "BaostockFetcher": {"cn"},
         "YfinanceFetcher": {"cn", "hk", "us", "jp", "kr", "tw"},
@@ -1160,6 +1161,7 @@ class DataFetcherManager:
         from .tushare_fetcher import TushareFetcher
         from .tickflow_fetcher import TickFlowFetcher
         from .fugle_fetcher import FugleFetcher
+        from .finmind_fetcher import FinMindFetcher
         from .pytdx_fetcher import PytdxFetcher
         from .baostock_fetcher import BaostockFetcher
         from .yfinance_fetcher import YfinanceFetcher
@@ -1199,6 +1201,12 @@ class DataFetcherManager:
             optional_fetchers.append(fugle)
         else:
             logger.debug("[data source init] skip FugleFetcher because FUGLE_API_KEY is not configured")
+
+        finmind = FinMindFetcher()
+        if finmind.is_available():
+            optional_fetchers.append(finmind)
+        else:
+            logger.debug("[data source init] skip FinMindFetcher because FINMIND_API_TOKEN is not configured")
 
         if LongbridgeFetcher.has_configured_credentials(config):
             optional_fetchers.append(LongbridgeFetcher())  # 长桥（美股/港股兜底，懒加载）
