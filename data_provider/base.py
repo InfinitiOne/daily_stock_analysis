@@ -31,6 +31,7 @@ from src.services.run_diagnostics import record_provider_run, record_provider_ru
 from .fundamental_adapter import AkshareFundamentalAdapter
 from .yfinance_fundamental_adapter import YfinanceFundamentalAdapter
 from .realtime_types import CircuitBreaker
+from .jeac_source_policy import assess_source_chain
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -3067,6 +3068,12 @@ class DataFetcherManager:
         result_ctx["missing_fields"] = [
             block for block, status in active_statuses.items() if status != "ok"
         ]
+        result_ctx["jeac_data_quality"] = assess_source_chain(
+            market,
+            "fundamental",
+            result_ctx["source_chain"],
+            missing_fields=result_ctx["missing_fields"],
+        )
 
         result_ctx["elapsed_ms"] = int((time.time() - start_ts) * 1000)
         if cache_ttl > 0 and self._should_cache_fundamental_context(result_ctx):
@@ -3401,6 +3408,16 @@ class DataFetcherManager:
             result_ctx["status"] = "partial"
         else:
             result_ctx["status"] = "ok"
+
+        result_ctx["missing_fields"] = [
+            block for block, status in block_statuses.items() if status != "ok"
+        ]
+        result_ctx["jeac_data_quality"] = assess_source_chain(
+            market,
+            "fundamental",
+            result_ctx["source_chain"],
+            missing_fields=result_ctx["missing_fields"],
+        )
 
         result_ctx["elapsed_ms"] = int((time.time() - start_ts) * 1000)
         if cache_ttl > 0 and self._should_cache_fundamental_context(result_ctx):

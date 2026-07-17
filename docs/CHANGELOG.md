@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [改进] 通知推送与完整 Markdown/微信报告不再重复附加“AI 决策信号”摘要，DecisionSignal 的存储、告警和 Web AI 建议页保持不变。
 - [改进] TickFlow 新增基于申万一级行业池的行业涨跌排行 fallback，并将基本面/市场结构单能力默认超时由 3 秒调整为 8 秒，降低正常慢响应被提前降级的概率。
 - [文档] 补充 macOS 未签名、未公证 DMG 被 Gatekeeper 拦截时的架构选择、安全排查与官方安装包临时放行步骤。
+- [新功能] 新增 JEAC Enterprise 5.0 資料來源政策與品質契約，明確區分官方來源、實際交叉驗證、來源不足、數值衝突與缺漏欄位。
+- [文档] 新增 JEAC 5.0 資料來源盤點，揭露台股官方行情與 MOPS 尚未接入等限制及後續整合順序。
+- [新功能] 新增預設 `JEAC Enterprise 5.0` Strategy Skill，讓主分析、Agent、Web 與 Bot 共用 SEPA／Stage 2／VCP／Pivot、JEAC Score、風控、資料限制及情境目標規則。
+- [测试] 新增 JEAC 5.0 預設技能與既有工具契約測試，並將資料來源盤點明確收斂為 25 份相關檔案。
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
 
