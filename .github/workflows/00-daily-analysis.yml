@@ -264,6 +264,10 @@ jobs:
           FUGLE_API_KEY: ${{ secrets.FUGLE_API_KEY }}
           FUGLE_PRIORITY: ${{ vars.FUGLE_PRIORITY || '0' }}
           FUGLE_TIMEOUT_SECONDS: ${{ vars.FUGLE_TIMEOUT_SECONDS || '12' }}
+          # FinMind（台股日线与结构化基本面/筹码资料；不设则不调用）
+          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
+          FINMIND_PRIORITY: ${{ vars.FINMIND_PRIORITY || '1' }}
+          FINMIND_TIMEOUT_SECONDS: ${{ vars.FINMIND_TIMEOUT_SECONDS || '12' }}
           # Longbridge OpenAPI（美股/港股实时行情字段补充；不设则仅 YFinance/AkShare，无 [Longbridge] 调用）
           LONGBRIDGE_OAUTH_CLIENT_ID: ${{ vars.LONGBRIDGE_OAUTH_CLIENT_ID || secrets.LONGBRIDGE_OAUTH_CLIENT_ID }}
           LONGBRIDGE_OAUTH_TOKEN_CACHE_B64: ${{ secrets.LONGBRIDGE_OAUTH_TOKEN_CACHE_B64 }}
@@ -495,6 +499,7 @@ jobs:
           echo "  Tushare Token: $([ -n "$TUSHARE_TOKEN" ] && echo '✅ 已配置' || echo '⚪ 未配置')"
           echo "  TickFlow:      $([ -n "$TICKFLOW_API_KEY" ] && echo '✅ 已配置' || echo '⚪ 未配置')"
           echo "  Fugle (TW):    $([ -n "$FUGLE_API_KEY" ] && echo '✅ 已配置' || echo '⚪ 未配置；将使用 Yahoo Finance 备援')"
+          echo "  FinMind (TW):  $([ -n "$FINMIND_API_TOKEN" ] && echo '✅ 已配置' || echo '⚪ 未配置')"
           if [ -n "$LONGBRIDGE_APP_KEY" ] && [ -n "$LONGBRIDGE_APP_SECRET" ] && [ -n "$LONGBRIDGE_ACCESS_TOKEN" ]; then
             echo "  Longbridge: ✅ 已配置（Legacy API Key）"
           elif [ -n "$LONGBRIDGE_OAUTH_CLIENT_ID" ] || { [ -n "$LONGBRIDGE_APP_KEY" ] && [ -z "$LONGBRIDGE_ACCESS_TOKEN" ]; }; then
