@@ -20,7 +20,10 @@ import tempfile
 
 logger = logging.getLogger(__name__)
 
-_DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file"
+# The service account itself is shared only with the designated report folder.
+# Full Drive scope is required to create and find subfolders under that shared
+# parent; it does not grant access to the owner's unshared Drive content.
+_DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 _TAIPEI = timezone(timedelta(hours=8))
 _SUPPORTED_KINDS = {"daily", "weekly", "monthly"}
 
