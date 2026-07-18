@@ -3,7 +3,7 @@
 
 The public repository never receives the generated documents.  A GitHub Actions
 runner creates them in a temporary directory, then uploads them only to the
-Google Drive folder explicitly shared with the Service Account.
+Google Drive folder owned by the authorised user (OAuth) or shared with a Service Account.
 """
 
 from __future__ import annotations
@@ -69,11 +69,17 @@ class PrivateReportDelivery:
         enabled: bool,
         folder_id: str = "",
         service_account_json: str = "",
+        auth_mode: str = "service_account",
+        oauth_client_json: str = "",
+        oauth_token_json: str = "",
         output_dir: Optional[Path] = None,
     ) -> None:
         self.enabled = enabled
         self.folder_id = folder_id.strip()
         self.service_account_json = service_account_json.strip()
+        self.auth_mode = (auth_mode or "service_account").strip().lower()
+        self.oauth_client_json = oauth_client_json.strip()
+        self.oauth_token_json = oauth_token_json.strip()
         self.output_dir = output_dir
 
     @classmethod
@@ -82,6 +88,9 @@ class PrivateReportDelivery:
             enabled=_env_bool("PRIVATE_REPORT_EXPORT_ENABLED", False),
             folder_id=os.getenv("GOOGLE_DRIVE_REPORT_FOLDER_ID", ""),
             service_account_json=os.getenv("GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON", ""),
+            auth_mode=os.getenv("GOOGLE_DRIVE_AUTH_MODE", "service_account"),
+            oauth_client_json=os.getenv("GOOGLE_DRIVE_OAUTH_CLIENT_JSON", ""),
+            oauth_token_json=os.getenv("GOOGLE_DRIVE_OAUTH_TOKEN_JSON", ""),
         )
 
     def export(
@@ -101,10 +110,7 @@ class PrivateReportDelivery:
             raise PrivateReportDeliveryError(f"Unsupported private report kind: {report_kind}")
         if not markdown or not markdown.strip():
             raise PrivateReportDeliveryError("Refusing to export an empty report")
-        if not self.folder_id or not self.service_account_json:
-            raise PrivateReportDeliveryError(
-                "Private report export is enabled but Google Drive credentials or folder ID are missing"
-            )
+        self._validate_configuration()
 
         moment = report_date.astimezone(_TAIPEI) if report_date else datetime.now(_TAIPEI)
         date_label = moment.strftime("%Y-%m") if kind == "monthly" else moment.strftime("%Y-%m-%d")
@@ -309,17 +315,87 @@ class PrivateReportDelivery:
             sections.append((current_title, current_lines))
         return sections or [("投資策略摘要", ["報告未提供可轉換的內容。"])]
 
+    def _validate_configuration(self) -> None:
+        if not self.folder_id:
+            raise PrivateReportDeliveryError(
+                "Private report export is enabled but GOOGLE_DRIVE_REPORT_FOLDER_ID is missing"
+            )
+        if self.auth_mode == "oauth":
+            if not self.oauth_client_json or not self.oauth_token_json:
+                raise PrivateReportDeliveryError(
+                    "OAuth delivery requires GOOGLE_DRIVE_OAUTH_CLIENT_JSON and "
+                    "GOOGLE_DRIVE_OAUTH_TOKEN_JSON"
+                )
+            return
+        if self.auth_mode == "service_account":
+            if not self.service_account_json:
+                raise PrivateReportDeliveryError(
+                    "Service Account delivery requires GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON"
+                )
+            return
+        raise PrivateReportDeliveryError(
+            "GOOGLE_DRIVE_AUTH_MODE must be 'oauth' or 'service_account'"
+        )
+
+    @staticmethod
+    def _oauth_client_config(payload: dict) -> dict:
+        client = payload.get("installed") or payload.get("web")
+        if not isinstance(client, dict):
+            raise PrivateReportDeliveryError(
+                "GOOGLE_DRIVE_OAUTH_CLIENT_JSON must contain an installed or web client"
+            )
+        required = ("client_id", "client_secret", "token_uri")
+        if any(not client.get(key) for key in required):
+            raise PrivateReportDeliveryError(
+                "GOOGLE_DRIVE_OAUTH_CLIENT_JSON is missing client_id, client_secret, or token_uri"
+            )
+        return client
+
     def _build_drive_client(self):
         try:
-            from google.oauth2 import service_account
             from googleapiclient.discovery import build
         except ImportError as exc:  # pragma: no cover - exercised in deployment checks
             raise PrivateReportDeliveryError("Google Drive client dependencies are not installed") from exc
-        try:
-            payload = json.loads(self.service_account_json)
-        except json.JSONDecodeError as exc:
-            raise PrivateReportDeliveryError("GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON is not valid JSON") from exc
-        credentials = service_account.Credentials.from_service_account_info(payload, scopes=[_DRIVE_SCOPE])
+
+        if self.auth_mode == "oauth":
+            try:
+                from google.oauth2.credentials import Credentials
+                client_payload = json.loads(self.oauth_client_json)
+                token_payload = json.loads(self.oauth_token_json)
+            except (ImportError, json.JSONDecodeError) as exc:
+                raise PrivateReportDeliveryError(
+                    "Google Drive OAuth credentials are not valid JSON or dependencies are missing"
+                ) from exc
+            client = self._oauth_client_config(client_payload)
+            if not token_payload.get("refresh_token"):
+                raise PrivateReportDeliveryError(
+                    "GOOGLE_DRIVE_OAUTH_TOKEN_JSON does not contain a refresh_token"
+                )
+            token_client_id = token_payload.get("client_id")
+            if token_client_id and token_client_id != client["client_id"]:
+                raise PrivateReportDeliveryError(
+                    "OAuth token and client JSON belong to different OAuth clients"
+                )
+            credentials = Credentials(
+                token=token_payload.get("token"),
+                refresh_token=token_payload["refresh_token"],
+                token_uri=token_payload.get("token_uri") or client["token_uri"],
+                client_id=client["client_id"],
+                client_secret=client["client_secret"],
+                scopes=token_payload.get("scopes") or [_DRIVE_SCOPE],
+            )
+        else:
+            try:
+                from google.oauth2 import service_account
+                payload = json.loads(self.service_account_json)
+            except (ImportError, json.JSONDecodeError) as exc:
+                raise PrivateReportDeliveryError(
+                    "GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON is not valid JSON or dependencies are missing"
+                ) from exc
+            credentials = service_account.Credentials.from_service_account_info(
+                payload, scopes=[_DRIVE_SCOPE]
+            )
+
         return build("drive", "v3", credentials=credentials, cache_discovery=False)
 
     @staticmethod
