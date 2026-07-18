@@ -1122,7 +1122,10 @@ def run_full_analysis(
                     market_report=market_report,
                     report_type=getattr(config, "report_type", "simple"),
                 )
-                _export_private_report(report_kind="daily", markdown=private_markdown)
+                _export_private_report(
+                    report_kind=os.getenv("JEAC_REPORT_KIND", "daily"),
+                    markdown=private_markdown,
+                )
             else:
                 logger.warning(
                     "[private-report] daily export skipped: market or stock data did not pass integrity"
