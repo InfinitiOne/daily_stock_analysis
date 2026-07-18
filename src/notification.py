@@ -2861,7 +2861,7 @@ class NotificationBuilder:
             )
             signal_text, emoji, _ = get_signal_level(
                 signal_action or display_advice,
-                self._display_score(r, report_language),
+                self._score_value(r) or 50,
                 report_language,
             )
             name = get_localized_stock_name(r.name, r.code, report_language)
