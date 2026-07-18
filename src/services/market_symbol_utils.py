@@ -103,7 +103,6 @@ def is_tw_etf_symbol(stock_code: str) -> bool:
     if parts is None:
         return False
     base, _ = parts
-    canonical = f"{base}.TW"
     return (
         is_suffix_market_symbol(stock_code, "tw")
         and (base in _TW_ETF_SPECIAL_BASES or base in _TW_ETF_NUMERIC_BASES)
