@@ -51,7 +51,10 @@ from src.llm.hermes import (
     sanitize_hermes_error_text,
 )
 from src.llm.generation_params import apply_litellm_generation_params
-from src.llm.errors import call_litellm_with_param_recovery
+from src.llm.errors import (
+    call_litellm_with_rate_limit_recovery,
+    is_litellm_rate_limit_error,
+)
 from src.llm.backend_registry import (
     LOCAL_CLI_GENERATION_BACKEND_IDS,
     LITELLM_BACKEND_ID,
@@ -2445,16 +2448,39 @@ class GeminiAnalyzer:
     def _get_analysis_max_output_tokens() -> int:
         """Bound output size so one stock cannot exhaust the LLM daily quota."""
         try:
-            configured = int(os.getenv("ANALYSIS_MAX_OUTPUT_TOKENS", "2400"))
+            configured = int(os.getenv("ANALYSIS_MAX_OUTPUT_TOKENS", "1600"))
         except (TypeError, ValueError):
-            configured = 2400
+            configured = 1600
         return max(800, min(configured, 8192))
+
+    @staticmethod
+    def _get_llm_request_delay_seconds() -> float:
+        """Use a provider-neutral pace so multi-stock runs do not burst TPM."""
+        try:
+            configured = float(os.getenv("LLM_REQUEST_DELAY_SECONDS", "8"))
+        except (TypeError, ValueError):
+            configured = 8.0
+        return max(0.0, min(configured, 60.0))
+
+    @staticmethod
+    def _get_llm_rate_limit_max_retries() -> int:
+        try:
+            configured = int(os.getenv("LLM_RATE_LIMIT_MAX_RETRIES", "2"))
+        except (TypeError, ValueError):
+            configured = 2
+        return max(0, min(configured, 5))
+
+    @staticmethod
+    def _get_llm_rate_limit_max_wait_seconds() -> float:
+        try:
+            configured = float(os.getenv("LLM_RATE_LIMIT_MAX_WAIT_SECONDS", "90"))
+        except (TypeError, ValueError):
+            configured = 90.0
+        return max(1.0, min(configured, 300.0))
 
     def _get_compact_analysis_system_prompt(self, report_language: str, stock_code: str) -> str:
         """Core JEAC rules for the compact production profile."""
         lang = normalize_report_language(report_language)
-        if self._is_compact_prompt_profile():
-            return self._get_compact_analysis_system_prompt(lang, stock_code)
         market_role = get_market_role(stock_code, lang)
         market_guidelines = get_market_guidelines(stock_code, lang)
         language_rule = {
@@ -2472,6 +2498,8 @@ JSON 键名保持英文；decision_type 只能为 buy|hold|sell；{language_rule
     def _get_analysis_system_prompt(self, report_language: str, stock_code: str = "") -> str:
         """Build the analyzer system prompt with output-language guidance."""
         lang = normalize_report_language(report_language)
+        if self._is_compact_prompt_profile():
+            return self._get_compact_analysis_system_prompt(lang, stock_code)
         market_role = get_market_role(stock_code, lang)
         market_guidelines = get_market_guidelines(stock_code, lang)
         skill_instructions, default_skill_policy, use_legacy_default_prompt = self._get_skill_prompt_sections()
@@ -3250,6 +3278,8 @@ JSON 键名保持英文；decision_type 只能为 buy|hold|sell；{language_rule
         last_usage: Dict[str, Any] = {}
         effective_system_prompt = system_prompt or self.TEXT_SYSTEM_PROMPT
         router_model_names = set(get_configured_llm_models(config.llm_model_list))
+        rate_limit_max_retries = self._get_llm_rate_limit_max_retries()
+        rate_limit_max_wait_seconds = self._get_llm_rate_limit_max_wait_seconds()
         for model in models_to_try:
             origins = route_deployment_origins(config.llm_model_list, model)
             model_stream = bool(stream and not origins.has_hermes)
@@ -3337,7 +3367,7 @@ JSON 键名保持英文；decision_type 只能为 buy|hold|sell；{language_rule
 
                 if model_stream:
                     try:
-                        stream_response = call_litellm_with_param_recovery(
+                        stream_response = call_litellm_with_rate_limit_recovery(
                             lambda kwargs: self._dispatch_litellm_completion(
                                 model,
                                 kwargs,
@@ -3350,6 +3380,8 @@ JSON 键名保持英文；decision_type 只能为 buy|hold|sell；{language_rule
                             model_list=recovery_model_list,
                             cache_recovery=False,
                             logger=logger,
+                            max_rate_limit_retries=rate_limit_max_retries,
+                            max_wait_seconds=rate_limit_max_wait_seconds,
                         )
                         _stream_text, _stream_usage = self._consume_litellm_stream(
                             stream_response,
@@ -3374,6 +3406,10 @@ JSON 键名保持英文；decision_type 只能为 buy|hold|sell；{language_rule
                             )
                         last_error = RuntimeError(f"{type(exc).__name__}: {safe_error}")
                     except Exception as exc:
+                        # Do not issue a duplicate non-stream request after a
+                        # throttled stream call; recovery above already waited.
+                        if is_litellm_rate_limit_error(exc):
+                            raise
                         safe_error = self._sanitize_litellm_exception_text(exc, config=config, model=model)
                         logger.warning(
                             "[LiteLLM] %s stream request failed before first chunk, falling back to non-stream: %s",
@@ -3390,7 +3426,7 @@ JSON 键名保持英文；decision_type 只能为 buy|hold|sell；{language_rule
                         response_validator(_stream_text)
                     return _stream_text, model, _stream_usage
 
-                response = call_litellm_with_param_recovery(
+                response = call_litellm_with_rate_limit_recovery(
                     lambda kwargs: self._dispatch_litellm_completion(
                         model,
                         kwargs,
@@ -3402,6 +3438,8 @@ JSON 键名保持英文；decision_type 只能为 buy|hold|sell；{language_rule
                     call_kwargs=call_kwargs,
                     model_list=recovery_model_list,
                     logger=logger,
+                    max_rate_limit_retries=rate_limit_max_retries,
+                    max_wait_seconds=rate_limit_max_wait_seconds,
                 )
 
                 content = self._extract_completion_text(response)
@@ -3511,8 +3549,8 @@ JSON 键名保持英文；decision_type 只能为 buy|hold|sell；{language_rule
         system_prompt = self._get_analysis_system_prompt(report_language, stock_code=code)
         skill_instructions, default_skill_policy, use_legacy_default_prompt = self._get_skill_prompt_sections()
         
-        # 请求前增加延时（防止连续请求触发限流）
-        request_delay = config.gemini_request_delay
+        # 所有远端 LLM 均使用同一节流间隔，避免多持仓在同一 TPM 窗口爆发。
+        request_delay = self._get_llm_request_delay_seconds()
         if request_delay > 0:
             logger.debug(f"[LLM] 请求前等待 {request_delay:.1f} 秒...")
             _emit_progress(65, f"{code}：LLM 请求前等待 {request_delay:.1f} 秒")
