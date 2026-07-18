@@ -101,3 +101,24 @@ def test_daily_delivery_creates_only_docx(tmp_path: Path, monkeypatch) -> None:
 
     assert [item.format for item in delivered] == ["docx"]
     assert list(tmp_path.glob("*.pptx")) == []
+
+
+def test_oauth_delivery_requires_client_and_refresh_token(tmp_path: Path) -> None:
+    delivery = PrivateReportDelivery(
+        enabled=True,
+        folder_id="folder",
+        auth_mode="oauth",
+        output_dir=tmp_path,
+    )
+
+    import pytest
+
+    with pytest.raises(Exception, match="GOOGLE_DRIVE_OAUTH_CLIENT_JSON"):
+        delivery.export(report_kind="daily", markdown=_SAMPLE)
+
+
+def test_oauth_client_rejects_malformed_client_config() -> None:
+    import pytest
+
+    with pytest.raises(Exception, match="installed or web client"):
+        PrivateReportDelivery._oauth_client_config({})

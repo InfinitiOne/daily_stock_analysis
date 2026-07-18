@@ -66,6 +66,9 @@ jobs:
           # Google Drive folder, never to a public GitHub artifact.
           PRIVATE_REPORT_EXPORT_ENABLED: ${{ vars.PRIVATE_REPORT_EXPORT_ENABLED || 'false' }}
           GOOGLE_DRIVE_REPORT_FOLDER_ID: ${{ vars.GOOGLE_DRIVE_REPORT_FOLDER_ID }}
+          GOOGLE_DRIVE_AUTH_MODE: ${{ vars.GOOGLE_DRIVE_AUTH_MODE || 'service_account' }}
+          GOOGLE_DRIVE_OAUTH_CLIENT_JSON: ${{ secrets.GOOGLE_DRIVE_OAUTH_CLIENT_JSON }}
+          GOOGLE_DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.GOOGLE_DRIVE_OAUTH_TOKEN_JSON }}
           GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON }}
           JEAC_REPORT_KIND: weekly
         run: python main.py --force-run
