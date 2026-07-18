@@ -129,7 +129,8 @@ class TrendAnalysisResult:
 
     # 买入信号
     buy_signal: BuySignal = BuySignal.WAIT
-    signal_score: int = 0            # 综合评分 0-100
+    signal_score: Optional[int] = None  # 未取得核心数据时保持 None，绝不伪造为 0
+    is_evaluable: bool = False          # 只有取得足够日线后才允许技术评分
     signal_reasons: List[str] = field(default_factory=list)
     risk_factors: List[str] = field(default_factory=list)
     
@@ -154,6 +155,7 @@ class TrendAnalysisResult:
             'support_ma10': self.support_ma10,
             'buy_signal': self.buy_signal.value,
             'signal_score': self.signal_score,
+            'is_evaluable': self.is_evaluable,
             'signal_reasons': self.signal_reasons,
             'risk_factors': self.risk_factors,
             'macd_dif': self.macd_dif,
@@ -221,7 +223,8 @@ class StockTrendAnalyzer:
             result.risk_factors.append("数据不足，无法完成分析")
             return result
         
-        # 确保数据按日期排序
+        # 确保数据按日期排序；从这里起才允许技术评分。
+        result.is_evaluable = True
         df = df.sort_values('date').reset_index(drop=True)
         
         # 计算均线
