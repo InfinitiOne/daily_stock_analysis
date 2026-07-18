@@ -869,7 +869,10 @@ def run_full_analysis(
             unavailable = [
                 str(getattr(item, "code", "unknown"))
                 for item in results
-                if getattr(item, "data_status", "available") != "available"
+                if (
+                    getattr(item, "data_status", "available") != "available"
+                    or not getattr(item, "success", False)
+                )
             ]
             missing = [code for code in weekly_expected_codes if code not in completed_codes]
             if unavailable or missing:
