@@ -2901,6 +2901,7 @@ class StockAnalysisPipeline:
                 trigger_source=getattr(self, "query_source", None),
             )
         try:
+            llm_analysis_started = False
             self._emit_progress(12, f"{code}：正在准备分析任务")
             # Step 1: 获取并保存数据
             success, error = self.fetch_and_save_stock_data(
@@ -2928,6 +2929,7 @@ class StockAnalysisPipeline:
             analyze_kwargs = {"query_id": effective_query_id}
             if current_time is not None:
                 analyze_kwargs["current_time"] = current_time
+            llm_analysis_started = True
             result = self.analyze_stock(code, report_type, **analyze_kwargs)
             
             if result and result.success:
@@ -2955,7 +2957,7 @@ class StockAnalysisPipeline:
             # a stock-level sell signal.  Preserve the reason so strict weekly
             # mode emits only its blocked diagnostic report.
             error_text = str(e)
-            if "429" in error_text or "rate limit" in error_text.lower():
+            if llm_analysis_started and ("429" in error_text or "rate limit" in error_text.lower()):
                 logger.error("[%s] LLM 限额触发，停止该标的报告生成: %s", code, error_text)
                 return build_data_unavailable_result(
                     code,
