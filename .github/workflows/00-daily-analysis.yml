@@ -590,21 +590,9 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
       
-      - name: 显示运行结果
+      - name: 显示运行状态
         if: always()
         run: |
-          echo ""
-          echo "=========================================="
-          echo "📊 分析完成"
-          echo "=========================================="
-          if [ -d "reports" ] && [ "$(ls -A reports 2>/dev/null)" ]; then
-            echo "生成的报告:"
-            ls -la reports/
-          else
-            echo "⚠️ 未生成报告文件"
-          fi
-          echo ""
-          if [ -f "logs/stock_analysis_$(date +%Y%m%d).log" ]; then
-            echo "📜 最近日志（最后 30 行）:"
-            tail -30 logs/stock_analysis_*.log 2>/dev/null || echo "无日志"
-          fi
+          echo "分析作业已结束。"
+          echo "正式报告仅会上传至配置的私人 Google Drive；GitHub 不显示或列出报告文件。"
+          echo "如需排错，请由具权限的维护者查看受限诊断 artifact。"
