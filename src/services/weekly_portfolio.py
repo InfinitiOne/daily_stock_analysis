@@ -73,7 +73,24 @@ def _table_cells(line: str) -> Iterable[str]:
 def _extract_symbol(line: str) -> Optional[str]:
     if "|" not in line:
         return None
-    for cell in _table_cells(line):
+    cells = list(_table_cells(line))
+    header_cells = {
+        "code",
+        "ticker",
+        "symbol",
+        "name",
+        "名稱",
+        "代號",
+        "股票",
+        "quantity",
+        "average cost",
+        "currency",
+    }
+    if not cells or any(cell.lower() in header_cells for cell in cells):
+        return None
+    if all(set(cell) <= {"-", ":", " "} for cell in cells):
+        return None
+    for cell in cells:
         # Accept a clean code cell only; never infer a code from free-form notes.
         symbol = normalize_portfolio_symbol(cell)
         if symbol:
