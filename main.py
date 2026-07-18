@@ -660,6 +660,58 @@ def _save_reused_market_review_report(
         logger.warning("复用大盘上下文保存大盘复盘报告失败: %s", exc)
 
 
+def _weekly_portfolio_mode_enabled() -> bool:
+    return os.getenv("JEAC_WEEKLY_PORTFOLIO_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _weekly_candidate_codes() -> List[str]:
+    raw = os.getenv("JEAC_WEEKLY_CANDIDATE_LIST", "")
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _save_weekly_integrity_block_report(
+    notifier: Any,
+    *,
+    expected_codes: List[str],
+    results: List[Any],
+    reason: str,
+) -> None:
+    result_by_code = {str(getattr(item, "code", "")): item for item in results}
+    lines = [
+        "# JEAC Weekly Report — 未取得／暫停判定",
+        "",
+        f"原因：{reason}",
+        "",
+        "## 持倉與候選股資料狀態",
+        "",
+        "| 標的 | 狀態 | 原因 |",
+        "| --- | --- | --- |",
+    ]
+    for code in expected_codes:
+        item = result_by_code.get(code)
+        if item is None:
+            status, detail = "未取得／暫停判定", "未完成分析"
+        else:
+            is_available = (
+                getattr(item, "data_status", "available") == "available"
+                and bool(getattr(item, "success", False))
+            )
+            status = "已取得" if is_available else "未取得／暫停判定"
+            detail = (
+                "；".join(getattr(item, "data_missing_reasons", []) or [])
+                or str(getattr(item, "error_message", "") or "")
+                or "-"
+            )
+        lines.append(f"| {code} | {status} | {detail} |")
+    try:
+        notifier.save_report_to_file(
+            "\n".join(lines),
+            f"weekly_report_blocked_{datetime.now().strftime('%Y%m%d')}.md",
+        )
+    except Exception as exc:
+        logger.warning("保存周报完整性阻断说明失败: %s", exc)
+
+
 def run_full_analysis(
     config: Config,
     args: argparse.Namespace,
@@ -680,8 +732,31 @@ def run_full_analysis(
     try:
         _refresh_stock_index_cache_for_analysis(config)
 
-        # Issue #529: Hot-reload STOCK_LIST from .env on each scheduled run
-        if stock_codes is None:
+        weekly_portfolio = None
+        weekly_mode = _weekly_portfolio_mode_enabled()
+        weekly_expected_codes: List[str] = []
+        if weekly_mode:
+            # Weekly reports are driven exclusively by the current portfolio
+            # master. STOCK_LIST remains available for non-weekly runs only.
+            from src.services.weekly_portfolio import (
+                load_current_portfolio,
+                merge_weekly_symbols,
+            )
+
+            weekly_portfolio = load_current_portfolio()
+            weekly_expected_codes = merge_weekly_symbols(
+                weekly_portfolio,
+                _weekly_candidate_codes(),
+            )
+            stock_codes = list(weekly_expected_codes)
+            logger.info(
+                "[weekly-portfolio] 已读取 %s，持仓/候选共 %d 档: %s",
+                weekly_portfolio.path.name,
+                len(stock_codes),
+                ", ".join(stock_codes),
+            )
+        # Issue #529: Hot-reload STOCK_LIST from .env on non-weekly runs.
+        elif stock_codes is None:
             config.refresh_stock_list()
 
         # Issue #373: Trading day filter (per-stock, per-market)
@@ -710,6 +785,10 @@ def run_full_analysis(
             and not getattr(args, 'no_market_review', False)
             and not config.single_stock_notify
         )
+        if weekly_mode:
+            # Defer every notification until both market and all stock data pass
+            # the weekly integrity gate.
+            merge_notification = True
 
         # 创建调度器
         save_context_snapshot = None
@@ -750,6 +829,10 @@ def run_full_analysis(
             daily_market_context_enabled=should_use_daily_market_context,
             daily_market_context_allow_generate=should_use_daily_market_context,
         )
+        if weekly_mode and weekly_portfolio is not None:
+            pipeline.portfolio_context = weekly_portfolio.to_context()
+            pipeline.weekly_report_strict = True
+            pipeline.weekly_expected_symbols = list(weekly_expected_codes)
         if should_use_daily_market_context:
             # Prompt-side context can reuse historical summaries, while full-merge
             # content must avoid silently reusing unrelated historical reports.
@@ -784,6 +867,32 @@ def run_full_analysis(
             merge_notification=merge_notification,
             current_time=analysis_reference_time,
         )
+
+        if weekly_mode:
+            completed_codes = {str(getattr(item, "code", "")) for item in results}
+            unavailable = [
+                str(getattr(item, "code", "unknown"))
+                for item in results
+                if (
+                    getattr(item, "data_status", "available") != "available"
+                    or not getattr(item, "success", False)
+                )
+            ]
+            missing = [code for code in weekly_expected_codes if code not in completed_codes]
+            if unavailable or missing:
+                reason = (
+                    "核心数据未完整取得；未生成完整周报。"
+                    f" unavailable={','.join(unavailable) or '-'}"
+                    f" missing={','.join(missing) or '-'}"
+                )
+                logger.error("[weekly-integrity] %s", reason)
+                _save_weekly_integrity_block_report(
+                    pipeline.notifier,
+                    expected_codes=weekly_expected_codes,
+                    results=results,
+                    reason=reason,
+                )
+                return False
 
         if should_use_daily_market_context and not market_context_summary:
             (
@@ -898,6 +1007,43 @@ def run_full_analysis(
             elif can_reuse_market_context:
                 market_report = market_context_full_report or market_context_summary
 
+        if weekly_mode:
+            if not market_report:
+                reason = "市场资料未取得；未生成完整周报。"
+                logger.error("[weekly-integrity] %s", reason)
+                _save_weekly_integrity_block_report(
+                    pipeline.notifier,
+                    expected_codes=weekly_expected_codes,
+                    results=results,
+                    reason=reason,
+                )
+                return False
+
+            stock_report = pipeline.notifier.generate_aggregate_report(
+                results,
+                getattr(config, "report_type", "simple"),
+            )
+            weekly_report = "\n\n---\n\n".join(
+                [
+                    "# JEAC Weekly Investment Strategy",
+                    f"## 市场环境\n\n{market_report}",
+                    f"## 持仓与候选股\n\n{stock_report}",
+                ]
+            )
+            pipeline.notifier.save_report_to_file(
+                weekly_report,
+                f"weekly_report_{datetime.now().strftime('%Y%m%d')}.md",
+            )
+            if not args.no_notify and pipeline.notifier.is_available():
+                if not pipeline.notifier.send(
+                    weekly_report,
+                    email_send_to_all=True,
+                    route_type="report",
+                ):
+                    logger.warning("完整周报推送失败")
+            logger.info("完整周报已通过市场、持仓与候选股数据完整性检查")
+            return True
+
         # Issue #190: 合并推送（个股+大盘复盘）
         if merge_notification and (results or market_report) and not args.no_notify:
             parts = []
@@ -920,11 +1066,11 @@ def run_full_analysis(
         # 输出摘要
         if results:
             logger.info("\n===== 分析结果摘要 =====")
-            for r in sorted(results, key=lambda x: x.sentiment_score, reverse=True):
+            for r in sorted(results, key=lambda x: x.sentiment_score or -1, reverse=True):
                 emoji = r.get_emoji()
                 logger.info(
                     f"{emoji} {r.name}({r.code}): {r.operation_advice} | "
-                    f"评分 {r.sentiment_score} | {r.trend_prediction}"
+                    f"评分 {r.sentiment_score if r.sentiment_score is not None else '未取得'} | {r.trend_prediction}"
                 )
 
         logger.info("\n任务执行完成")

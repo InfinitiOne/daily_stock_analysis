@@ -1,0 +1,74 @@
+name: JEAC Weekly Investment Strategy
+
+on:
+  schedule:
+    # Saturday 22:30 Asia/Taipei = Saturday 14:30 UTC.
+    - cron: "30 14 * * 6"
+  workflow_dispatch:
+    inputs:
+      force_run:
+        description: "Run even if a market calendar reports closed"
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: jeac-weekly-analysis
+  cancel-in-progress: false
+
+jobs:
+  weekly-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(vars.ANALYSIS_TIMEOUT_MINUTES || '45') }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Load protected current portfolio master
+        env:
+          JEAC_CURRENT_PORTFOLIO_MARKDOWN: ${{ secrets.JEAC_CURRENT_PORTFOLIO_MARKDOWN }}
+        run: |
+          if [ -z "$JEAC_CURRENT_PORTFOLIO_MARKDOWN" ]; then
+            echo "JEAC_CURRENT_PORTFOLIO_MARKDOWN is not configured."
+            exit 1
+          fi
+          printf '%s\n' "$JEAC_CURRENT_PORTFOLIO_MARKDOWN" > 08-01_Current_Portfolio.md
+          chmod 600 08-01_Current_Portfolio.md
+      - name: Generate weekly report
+        env:
+          JEAC_WEEKLY_PORTFOLIO_MODE: "true"
+          JEAC_WEEKLY_REPORT_STRICT: "true"
+          JEAC_WEEKLY_CANDIDATE_LIST: ${{ vars.JEAC_WEEKLY_CANDIDATE_LIST }}
+          # The weekly portfolio master, never STOCK_LIST, is the holding source.
+          LITELLM_CONFIG: ${{ vars.LITELLM_CONFIG || secrets.LITELLM_CONFIG }}
+          LITELLM_CONFIG_YAML: ${{ vars.LITELLM_CONFIG_YAML || secrets.LITELLM_CONFIG_YAML }}
+          LITELLM_MODEL: ${{ vars.LITELLM_MODEL || secrets.LITELLM_MODEL }}
+          LLM_CHANNELS: ${{ vars.LLM_CHANNELS || 'groq' }}
+          LLM_GROQ_PROTOCOL: ${{ vars.LLM_GROQ_PROTOCOL || 'openai' }}
+          LLM_GROQ_BASE_URL: ${{ vars.LLM_GROQ_BASE_URL || 'https://api.groq.com/openai/v1' }}
+          LLM_GROQ_API_KEYS: ${{ secrets.LLM_GROQ_API_KEYS }}
+          LLM_GROQ_MODELS: ${{ vars.LLM_GROQ_MODELS || 'llama-3.3-70b-versatile' }}
+          LLM_GROQ_ENABLED: ${{ vars.LLM_GROQ_ENABLED || 'true' }}
+          ANALYSIS_PROMPT_PROFILE: ${{ vars.ANALYSIS_PROMPT_PROFILE || 'compact' }}
+          ANALYSIS_MAX_OUTPUT_TOKENS: ${{ vars.ANALYSIS_MAX_OUTPUT_TOKENS || '2400' }}
+          FUGLE_API_KEY: ${{ secrets.FUGLE_API_KEY }}
+          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
+          FUGLE_PRIORITY: ${{ vars.FUGLE_PRIORITY || '0' }}
+          FINMIND_PRIORITY: ${{ vars.FINMIND_PRIORITY || '1' }}
+          MARKET_REVIEW_ENABLED: ${{ vars.MARKET_REVIEW_ENABLED || 'true' }}
+          MARKET_REVIEW_REGION: ${{ vars.MARKET_REVIEW_REGION || 'tw' }}
+          REPORT_TYPE: full
+        run: python main.py --force-run
+      - name: Upload reports and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: jeac-weekly-report-${{ github.run_number }}
+          path: |
+            reports/
+            logs/
+          retention-days: 30

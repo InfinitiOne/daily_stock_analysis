@@ -827,12 +827,12 @@ class NotificationService(
         # 按评分排序（高分在前）
         sorted_results = sorted(
             results,
-            key=lambda x: x.sentiment_score,
+            key=self._score_sort_key,
             reverse=True
         )
 
         buy_count, sell_count, hold_count = self._count_display_decisions(results, report_language)
-        avg_score = sum(r.sentiment_score for r in results) / len(results) if results else 0
+        avg_score = self._average_score(results)
 
         report_lines.extend([
             f"## 📊 {labels['summary_heading']}",
@@ -842,7 +842,7 @@ class NotificationService(
             f"| 🟢 {labels['buy_label']} | **{buy_count}** {labels['stock_unit_compact']} |",
             f"| 🟡 {labels['watch_label']} | **{hold_count}** {labels['stock_unit_compact']} |",
             f"| 🔴 {labels['sell_label']} | **{sell_count}** {labels['stock_unit_compact']} |",
-            f"| 📈 {labels['avg_score_label']} | **{avg_score:.1f}** |",
+            f"| 📈 {labels['avg_score_label']} | **{self._format_average_score(avg_score, report_language)}** |",
             "",
             "---",
             "",
@@ -856,7 +856,7 @@ class NotificationService(
                 report_lines.append(
                     f"{emoji} **{self._get_display_name(r, report_language)}({r.code})**: "
                     f"{signal_text} | "
-                    f"{labels['score_label']} {r.sentiment_score} | "
+                    f"{labels['score_label']} {self._display_score(r, report_language)} | "
                     f"{localize_trend_prediction(r.trend_prediction, report_language)}"
                 )
         else:
@@ -870,7 +870,7 @@ class NotificationService(
                     f"### {emoji} {self._get_display_name(result, report_language)} ({result.code})",
                     "",
                     f"**{labels['action_advice_label']}：{signal_text}** | "
-                    f"**{labels['score_label']}：{result.sentiment_score}** | "
+                    f"**{labels['score_label']}：{self._display_score(result, report_language)}** | "
                     f"**{labels['trend_label']}：{localize_trend_prediction(result.trend_prediction, report_language)}** | "
                     f"**Confidence：{confidence_stars}**",
                     "",
@@ -1116,6 +1116,39 @@ class NotificationService(
         hold_count = len(buckets) - buy_count - sell_count
         return buy_count, sell_count, hold_count
 
+    @staticmethod
+    def _score_value(result: AnalysisResult) -> Optional[float]:
+        """Return a real score only when the core data was actually available."""
+        if getattr(result, "data_status", "available") != "available":
+            return None
+        value = getattr(result, "sentiment_score", None)
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _score_sort_key(self, result: AnalysisResult) -> float:
+        score = self._score_value(result)
+        return score if score is not None else -1.0
+
+    @staticmethod
+    def _display_score(result: AnalysisResult, report_language: str) -> str:
+        if getattr(result, "data_status", "available") != "available":
+            return "Not available" if report_language == "en" else "未取得"
+        value = getattr(result, "sentiment_score", None)
+        return str(value) if value is not None else ("Not available" if report_language == "en" else "未取得")
+
+    def _average_score(self, results: List[AnalysisResult]) -> Optional[float]:
+        scores = [self._score_value(result) for result in results]
+        numeric_scores = [score for score in scores if score is not None]
+        return sum(numeric_scores) / len(numeric_scores) if numeric_scores else None
+
+    @staticmethod
+    def _format_average_score(value: Optional[float], report_language: str) -> str:
+        if value is None:
+            return "N/A" if report_language == "en" else "未取得"
+        return f"{value:.1f}"
+
     def _get_signal_level(self, result: AnalysisResult) -> tuple:
         """Get display text and signal metadata from the resolved action."""
         report_language = self._get_report_language(result)
@@ -1135,7 +1168,7 @@ class NotificationService(
         }.get(display_fields["action"])
         _, emoji, signal_tag = get_signal_level(
             signal_advice or self._get_display_operation_advice(result, report_language),
-            result.sentiment_score,
+            self._score_value(result) or 50,
             report_language,
         )
         return (
@@ -1197,7 +1230,7 @@ class NotificationService(
             report_date = datetime.now().strftime('%Y-%m-%d')
 
         # 按评分排序（高分在前）
-        sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
+        sorted_results = sorted(results, key=self._score_sort_key, reverse=True)
 
         buy_count, sell_count, hold_count = self._count_display_decisions(results, report_language)
 
@@ -1221,7 +1254,7 @@ class NotificationService(
                 report_lines.append(
                     f"{signal_emoji} **{display_name}({r.code})**: "
                     f"{signal_text} | "
-                    f"{labels['score_label']} {r.sentiment_score} | "
+                    f"{labels['score_label']} {self._display_score(r, report_language)} | "
                     f"{localize_trend_prediction(r.trend_prediction, report_language)}"
                 )
             report_lines.extend([
@@ -1527,7 +1560,7 @@ class NotificationService(
         report_date = datetime.now().strftime('%Y-%m-%d')
 
         # 按评分排序
-        sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
+        sorted_results = sorted(results, key=self._score_sort_key, reverse=True)
 
         buy_count, sell_count, hold_count = self._count_display_decisions(results, report_language)
 
@@ -1549,7 +1582,7 @@ class NotificationService(
                 lines.append(
                     f"{signal_emoji} **{stock_name}({r.code})**: "
                     f"{signal_text} | "
-                    f"{labels['score_label']} {r.sentiment_score} | "
+                    f"{labels['score_label']} {self._display_score(r, report_language)} | "
                     f"{localize_trend_prediction(r.trend_prediction, report_language)}"
                 )
         else:
@@ -1673,17 +1706,17 @@ class NotificationService(
         labels = get_report_labels(report_language)
 
         # 按评分排序
-        sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
+        sorted_results = sorted(results, key=self._score_sort_key, reverse=True)
 
         buy_count, sell_count, hold_count = self._count_display_decisions(results, report_language)
-        avg_score = sum(r.sentiment_score for r in results) / len(results) if results else 0
+        avg_score = self._average_score(results)
 
         lines = [
             f"## 📅 {report_date} {labels['report_title']}",
             "",
             f"> {labels['analyzed_prefix']} **{len(results)}** {labels['stock_unit_compact']} | "
             f"🟢{labels['buy_label']}:{buy_count} 🟡{labels['watch_label']}:{hold_count} 🔴{labels['sell_label']}:{sell_count} | "
-            f"{labels['avg_score_label']}:{avg_score:.0f}",
+            f"{labels['avg_score_label']}:{self._format_average_score(avg_score, report_language)}",
         ]
         self._append_market_status_line(lines, results, report_language)
 
@@ -1695,7 +1728,7 @@ class NotificationService(
             lines.append(f"### {emoji} {self._get_display_name(result, report_language)}({result.code})")
             lines.append(
                 f"**{signal_text}** | "
-                f"{labels['score_label']}:{result.sentiment_score} | "
+                f"{labels['score_label']}:{self._display_score(result, report_language)} | "
                 f"{localize_trend_prediction(result.trend_prediction, report_language)}"
             )
 
@@ -1764,7 +1797,7 @@ class NotificationService(
         # Fallback: brief summary from dashboard report
         if not results:
             return f"# {report_date} {labels['brief_title']}\n\n{labels['no_results']}"
-        sorted_results = sorted(results, key=lambda x: x.sentiment_score, reverse=True)
+        sorted_results = sorted(results, key=self._score_sort_key, reverse=True)
         buy_count, sell_count, hold_count = self._count_display_decisions(results, report_language)
         lines = [
             f"# {report_date} {labels['brief_title']}",
@@ -1781,7 +1814,7 @@ class NotificationService(
             lines.append(
                 f"**{name}({r.code})** {emoji} "
                 f"{signal_text} | "
-                f"{labels['score_label']} {r.sentiment_score} | {one}"
+                f"{labels['score_label']} {self._display_score(r, report_language)} | {one}"
             )
         lines.append("")
         lines.append(f"*{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
@@ -1817,7 +1850,7 @@ class NotificationService(
         lines = [
             f"## {signal_emoji} {stock_name} ({result.code})",
             "",
-            f"> {report_date} | {labels['score_label']}: **{result.sentiment_score}** | {localize_trend_prediction(result.trend_prediction, report_language)}",
+            f"> {report_date} | {labels['score_label']}: **{self._display_score(result, report_language)}** | {localize_trend_prediction(result.trend_prediction, report_language)}",
             "",
         ]
 
@@ -2807,7 +2840,21 @@ class NotificationBuilder:
         labels = get_report_labels(report_language)
         lines = [f"📊 **{labels['summary_heading']}**", ""]
 
-        for r in sorted(results, key=lambda x: x.sentiment_score, reverse=True):
+        def score_value(item: AnalysisResult) -> float:
+            if getattr(item, "data_status", "available") != "available":
+                return -1.0
+            try:
+                return float(getattr(item, "sentiment_score", None))
+            except (TypeError, ValueError):
+                return -1.0
+
+        def display_score(item: AnalysisResult) -> str:
+            if getattr(item, "data_status", "available") != "available":
+                return "Not available" if report_language == "en" else "未取得"
+            value = getattr(item, "sentiment_score", None)
+            return str(value) if value is not None else ("Not available" if report_language == "en" else "未取得")
+
+        for r in sorted(results, key=score_value, reverse=True):
             display_action = display_action_fields_for_result(
                 r,
                 report_language=report_language,
@@ -2828,13 +2875,13 @@ class NotificationBuilder:
             )
             signal_text, emoji, _ = get_signal_level(
                 signal_action or display_advice,
-                r.sentiment_score,
+                score_value(r) if score_value(r) >= 0 else 50,
                 report_language,
             )
             name = get_localized_stock_name(r.name, r.code, report_language)
             lines.append(
                 f"{emoji} {name}({r.code}): {display_advice} | "
-                f"{labels['score_label']} {r.sentiment_score}"
+                f"{labels['score_label']} {display_score(r)}"
             )
 
         return "\n".join(lines)

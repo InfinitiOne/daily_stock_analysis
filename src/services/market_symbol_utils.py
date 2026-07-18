@@ -36,6 +36,12 @@ _SUFFIX_TO_SPEC = {
     for suffix in spec.suffixes
 }
 
+# Taiwan exchange-traded funds with non-numeric identifiers must not be
+# mistaken for mainland stock codes. Extend this allow-list as instruments are
+# added, rather than accepting arbitrary alpha suffixes.
+_TW_ETF_SPECIAL_BASES = frozenset({"00403A"})
+_TW_ETF_NUMERIC_BASES = frozenset({"00940"})
+
 
 def split_suffix_symbol(stock_code: str) -> tuple[str, str] | None:
     """Return ``(base, suffix)`` for dotted symbols, upper-cased and stripped."""
@@ -59,6 +65,8 @@ def get_suffix_market(stock_code: str) -> Optional[str]:
     spec = _SUFFIX_TO_SPEC.get(suffix)
     if spec is None:
         return None
+    if spec.market == "tw" and base in _TW_ETF_SPECIAL_BASES:
+        return spec.market
     if not (base.isdigit() and len(base) in spec.digit_lengths):
         return None
     return spec.market
@@ -83,6 +91,22 @@ def is_kr_suffix_symbol(stock_code: str) -> bool:
 
 def is_tw_suffix_symbol(stock_code: str) -> bool:
     return is_suffix_market_symbol(stock_code, "tw")
+
+
+def is_tw_etf_symbol(stock_code: str) -> bool:
+    """Return whether *stock_code* is a routed Taiwan ETF.
+
+    The routing list is deliberately explicit for non-standard symbols so
+    unsupported products cannot silently fall through to A-share providers.
+    """
+    parts = split_suffix_symbol(stock_code)
+    if parts is None:
+        return False
+    base, _ = parts
+    return (
+        is_suffix_market_symbol(stock_code, "tw")
+        and (base in _TW_ETF_SPECIAL_BASES or base in _TW_ETF_NUMERIC_BASES)
+    )
 
 
 def normalize_suffix_market_symbol(stock_code: str) -> Optional[str]:

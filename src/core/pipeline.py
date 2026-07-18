@@ -31,6 +31,7 @@ from data_provider.realtime_types import ChipDistribution
 from src.analyzer import (
     GeminiAnalyzer,
     AnalysisResult,
+    build_data_unavailable_result,
     fill_price_position_if_needed,
     normalize_chip_structure_availability,
     populate_decision_action_fields,
@@ -545,6 +546,22 @@ class StockAnalysisPipeline:
                               f"买入信号={trend_result.buy_signal.value}, 评分={trend_result.signal_score}")
             except Exception as e:
                 logger.warning(f"{stock_name}({code}) 趋势分析失败: {e}", exc_info=True)
+
+            if trend_result is None or not getattr(trend_result, "is_evaluable", False):
+                logger.warning(
+                    "%s(%s) 核心日线不足，停止技术评分与 LLM 交易建议",
+                    stock_name,
+                    code,
+                )
+                reasons = []
+                if trend_result and getattr(trend_result, "risk_factors", None):
+                    reasons = list(trend_result.risk_factors)
+                return build_data_unavailable_result(
+                    code,
+                    stock_name,
+                    reasons=reasons or ["核心日线资料未取得或不足，技术判定已暂停"],
+                    report_language=report_language,
+                )
 
             if use_agent:
                 logger.info(f"{stock_name}({code}) 启用 Agent 模式进行分析")
@@ -2884,6 +2901,7 @@ class StockAnalysisPipeline:
                 trigger_source=getattr(self, "query_source", None),
             )
         try:
+            llm_analysis_started = False
             self._emit_progress(12, f"{code}：正在准备分析任务")
             # Step 1: 获取并保存数据
             success, error = self.fetch_and_save_stock_data(
@@ -2892,7 +2910,14 @@ class StockAnalysisPipeline:
             
             if not success:
                 logger.warning(f"[{code}] 数据获取失败: {error}")
-                # 即使获取失败，也尝试用已有数据分析
+                # Never score or sell from an empty core-data set. This is
+                # particularly important for ETFs whose dedicated route failed.
+                return build_data_unavailable_result(
+                    code,
+                    code,
+                    reasons=[error or "核心日线数据未取得"],
+                    report_language=getattr(self.config, "report_language", "zh"),
+                )
             else:
                 self._emit_progress(16, f"{code}：行情数据准备完成")
             
@@ -2904,6 +2929,7 @@ class StockAnalysisPipeline:
             analyze_kwargs = {"query_id": effective_query_id}
             if current_time is not None:
                 analyze_kwargs["current_time"] = current_time
+            llm_analysis_started = True
             result = self.analyze_stock(code, report_type, **analyze_kwargs)
             
             if result and result.success:
@@ -2927,6 +2953,19 @@ class StockAnalysisPipeline:
             return result
             
         except Exception as e:
+            # A Groq/OpenAI-compatible 429 is an availability interruption, not
+            # a stock-level sell signal.  Preserve the reason so strict weekly
+            # mode emits only its blocked diagnostic report.
+            error_text = str(e)
+            if llm_analysis_started and ("429" in error_text or "rate limit" in error_text.lower()):
+                logger.error("[%s] LLM 限额触发，停止该标的报告生成: %s", code, error_text)
+                return build_data_unavailable_result(
+                    code,
+                    code,
+                    reasons=[f"LLM 服务回传 429／限额；报告生成已暂停：{error_text}"],
+                    report_language=getattr(self.config, "report_language", "zh"),
+                    data_status="paused",
+                )
             # 捕获所有异常，确保单股失败不影响整体
             logger.exception(f"[{code}] 处理过程发生未知异常: {e}")
             return None
@@ -3092,6 +3131,32 @@ class StockAnalysisPipeline:
         
         logger.info("===== 分析完成 =====")
         logger.info(f"成功: {success_count}, 失败: {fail_count}, 耗时: {elapsed_time:.2f} 秒")
+
+        # A weekly report must never be rendered from an incomplete holding or
+        # candidate set. Main writes a small integrity-blocked report instead.
+        if getattr(self, "weekly_report_strict", False) and not dry_run:
+            expected = set(getattr(self, "weekly_expected_symbols", []) or stock_codes)
+            completed = {getattr(result, "code", None) for result in results}
+            unavailable = [
+                getattr(result, "code", "unknown")
+                for result in results
+                if (
+                    getattr(result, "data_status", "available") != "available"
+                    or not getattr(result, "success", False)
+                )
+            ]
+            missing = sorted(code for code in expected if code not in completed)
+            if unavailable or missing:
+                logger.error(
+                    "[weekly-integrity] Full weekly report blocked: unavailable=%s missing=%s",
+                    unavailable,
+                    missing,
+                )
+            else:
+                logger.info(
+                    "[weekly-integrity] 股票资料完整；延后报告与推送，等待市场资料验证"
+                )
+            return results
         
         # 保存报告到本地文件（无论是否推送通知都保存）
         if results and not dry_run:

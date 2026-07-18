@@ -16,7 +16,7 @@ import math
 import os
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List, Tuple, Callable
 
 import litellm
@@ -309,6 +309,12 @@ def check_content_integrity(
     - Required fields: missing → pass=False, added to missing_fields
     - Optional fields (e.g., signal_attribution): missing → pass=True and are not added to missing_fields
     """
+    # A data-unavailable result is a terminal availability state.  It must not
+    # enter generic placeholder repair, which would manufacture a score and
+    # allow downstream code to treat missing data as a trade signal.
+    if getattr(result, "data_status", "available") != "available":
+        return True, []
+
     missing: List[str] = []
 
     def _is_blank_text(value: Any) -> bool:
@@ -396,6 +402,9 @@ def apply_placeholder_fill(result: "AnalysisResult", missing_fields: List[str]) 
         if isinstance(value, str):
             return not value.strip()
         return False
+
+    if getattr(result, "data_status", "available") != "available":
+        return
 
     report_language = normalize_report_language(getattr(result, "report_language", "zh"))
     placeholder = get_placeholder_text(report_language)
@@ -1677,7 +1686,7 @@ class AnalysisResult:
     name: str
 
     # ========== 核心指标 ==========
-    sentiment_score: int  # 综合评分 0-100 (>70强烈看多, >60看多, 40-60震荡, <40看空)
+    sentiment_score: Optional[int]  # 综合评分；核心数据缺失时必须为 None，不能伪造为 0
     trend_prediction: str  # 趋势预测：强烈看多/看多/震荡/看空/强烈看空
     operation_advice: str  # 操作建议：买入/加仓/持有/减仓/卖出/观望
     decision_type: str = "hold"  # 决策类型：buy/hold/sell（用于统计）
@@ -1723,6 +1732,9 @@ class AnalysisResult:
     data_sources: str = ""  # 数据来源说明
     success: bool = True
     error_message: Optional[str] = None
+    # Core-data availability is explicit so unavailable data cannot become a 0-score/sell signal.
+    data_status: str = "available"  # available / unavailable
+    data_missing_reasons: List[str] = field(default_factory=list)
 
     # ========== 价格数据（分析时快照）==========
     current_price: Optional[float] = None  # 分析时的股价
@@ -1773,6 +1785,8 @@ class AnalysisResult:
             'search_performed': self.search_performed,
             'success': self.success,
             'error_message': self.error_message,
+            'data_status': self.data_status,
+            'data_missing_reasons': list(self.data_missing_reasons or []),
             'current_price': self.current_price,
             'change_pct': self.change_pct,
             'model_used': self.model_used,
@@ -1813,10 +1827,12 @@ class AnalysisResult:
         return []
 
     def get_emoji(self) -> str:
-        """根据操作建议返回对应 emoji"""
+        """根据操作建议返回对应 emoji."""
+        if self.data_status != "available":
+            return "⚪"
         _, emoji, _ = get_signal_level(
             self.operation_advice,
-            self.sentiment_score,
+            self.sentiment_score if self.sentiment_score is not None else 50,
             self.report_language,
         )
         return emoji
@@ -1833,6 +1849,82 @@ class AnalysisResult:
         }
         return star_map.get(str(self.confidence_level or "").strip().lower(), "⭐⭐")
 
+
+
+def build_data_unavailable_result(
+    code: str,
+    name: str,
+    *,
+    reasons: Optional[List[str]] = None,
+    report_language: str = "zh",
+    data_status: str = "unavailable",
+) -> AnalysisResult:
+    """Return a non-trading result when core data is unavailable.
+
+    Missing quote/daily-bar data is an availability state, not a bearish signal.
+    This constructor is deliberately used before technical scoring or any LLM call.
+    """
+    language = normalize_report_language(report_language)
+    status_text = _localized_text(
+        language,
+        en="Data unavailable / judgement paused",
+        zh="未取得／暫停判定",
+        ko="데이터 미확보 / 판단 보류",
+    )
+    reason_items = [str(item).strip() for item in (reasons or []) if str(item).strip()]
+    if not reason_items:
+        reason_items = [
+            _localized_text(
+                language,
+                en="Core quote or daily-bar data was not retrieved.",
+                zh="核心行情或日線資料未取得。",
+                ko="핵심 시세 또는 일봉 데이터를 가져오지 못했습니다.",
+            )
+        ]
+    dashboard = {
+        "core_conclusion": {
+            "one_sentence": status_text,
+            "signal_type": status_text,
+            "time_sensitivity": status_text,
+            "position_advice": {"no_position": status_text, "has_position": status_text},
+        },
+        "data_perspective": {},
+        "intelligence": {"risk_alerts": reason_items, "positive_catalysts": []},
+        "battle_plan": {},
+        "phase_decision": {
+            "phase_context": {"phase": "unknown"},
+            "action_window": status_text,
+            "immediate_action": status_text,
+            "watch_conditions": [],
+            "next_check_time": status_text,
+            "confidence_reason": status_text,
+            "data_limitations": reason_items,
+        },
+    }
+    return AnalysisResult(
+        code=code,
+        name=name or code,
+        sentiment_score=None,
+        trend_prediction=status_text,
+        operation_advice=status_text,
+        decision_type="hold",
+        confidence_level=localize_confidence_level("低", language),
+        report_language=language,
+        action="watch",
+        action_label=status_text,
+        dashboard=dashboard,
+        trend_analysis=status_text,
+        technical_analysis=status_text,
+        ma_analysis=status_text,
+        volume_analysis=status_text,
+        analysis_summary=status_text,
+        key_points=status_text,
+        risk_warning="；".join(reason_items),
+        buy_reason=status_text,
+        success=True,
+        data_status=data_status,
+        data_missing_reasons=reason_items,
+    )
 
 def populate_decision_action_fields(
     result: AnalysisResult,
