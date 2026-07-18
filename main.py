@@ -813,11 +813,12 @@ def run_full_analysis(
                 _weekly_candidate_codes(),
             )
             stock_codes = list(weekly_expected_codes)
+            # The weekly portfolio is supplied by a secret.  Do not expose
+            # holdings in logs when the source repository is public.
             logger.info(
-                "[weekly-portfolio] 已读取 %s，持仓/候选共 %d 档: %s",
+                "[weekly-portfolio] 已读取 %s，持仓/候选共 %d 档（代码已隐藏）",
                 weekly_portfolio.path.name,
                 len(stock_codes),
-                ", ".join(stock_codes),
             )
         # Issue #529: Hot-reload STOCK_LIST from .env on non-weekly runs.
         elif stock_codes is None:
