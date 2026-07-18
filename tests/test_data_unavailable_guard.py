@@ -19,6 +19,13 @@ def test_core_data_unavailable_is_not_scored_or_marked_for_sale() -> None:
     assert missing == []
     assert result.sentiment_score is None
 
+    paused = build_data_unavailable_result(
+        "NVDA", "NVIDIA", reasons=["LLM 429"], data_status="paused"
+    )
+    assert paused.data_status == "paused"
+    assert paused.sentiment_score is None
+    assert paused.action == "watch"
+
 
 def test_empty_history_never_becomes_a_zero_score_sell_signal() -> None:
     trend = StockTrendAnalyzer().analyze(None, "00403A.TW")
