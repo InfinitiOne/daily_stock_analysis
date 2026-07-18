@@ -3116,6 +3116,25 @@ class StockAnalysisPipeline:
         
         logger.info("===== 分析完成 =====")
         logger.info(f"成功: {success_count}, 失败: {fail_count}, 耗时: {elapsed_time:.2f} 秒")
+
+        # A weekly report must never be rendered from an incomplete holding or
+        # candidate set. Main writes a small integrity-blocked report instead.
+        if getattr(self, "weekly_report_strict", False) and not dry_run:
+            expected = set(getattr(self, "weekly_expected_symbols", []) or stock_codes)
+            completed = {getattr(result, "code", None) for result in results}
+            unavailable = [
+                getattr(result, "code", "unknown")
+                for result in results
+                if getattr(result, "data_status", "available") != "available"
+            ]
+            missing = sorted(code for code in expected if code not in completed)
+            if unavailable or missing:
+                logger.error(
+                    "[weekly-integrity] Full weekly report blocked: unavailable=%s missing=%s",
+                    unavailable,
+                    missing,
+                )
+                return results
         
         # 保存报告到本地文件（无论是否推送通知都保存）
         if results and not dry_run:
