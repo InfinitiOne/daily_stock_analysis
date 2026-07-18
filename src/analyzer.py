@@ -1857,6 +1857,7 @@ def build_data_unavailable_result(
     *,
     reasons: Optional[List[str]] = None,
     report_language: str = "zh",
+    data_status: str = "unavailable",
 ) -> AnalysisResult:
     """Return a non-trading result when core data is unavailable.
 
@@ -1921,7 +1922,7 @@ def build_data_unavailable_result(
         risk_warning="；".join(reason_items),
         buy_reason=status_text,
         success=True,
-        data_status="unavailable",
+        data_status=data_status,
         data_missing_reasons=reason_items,
     )
 
