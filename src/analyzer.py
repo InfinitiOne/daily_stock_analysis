@@ -309,6 +309,12 @@ def check_content_integrity(
     - Required fields: missing → pass=False, added to missing_fields
     - Optional fields (e.g., signal_attribution): missing → pass=True and are not added to missing_fields
     """
+    # A data-unavailable result is a terminal availability state.  It must not
+    # enter generic placeholder repair, which would manufacture a score and
+    # allow downstream code to treat missing data as a trade signal.
+    if getattr(result, "data_status", "available") != "available":
+        return True, []
+
     missing: List[str] = []
 
     def _is_blank_text(value: Any) -> bool:
@@ -396,6 +402,9 @@ def apply_placeholder_fill(result: "AnalysisResult", missing_fields: List[str]) 
         if isinstance(value, str):
             return not value.strip()
         return False
+
+    if getattr(result, "data_status", "available") != "available":
+        return
 
     report_language = normalize_report_language(getattr(result, "report_language", "zh"))
     placeholder = get_placeholder_text(report_language)
