@@ -82,6 +82,9 @@ jobs:
           OPENAI_VISION_MODEL: ${{ vars.OPENAI_VISION_MODEL || secrets.OPENAI_VISION_MODEL }}
           VISION_PROVIDER_PRIORITY: ${{ vars.VISION_PROVIDER_PRIORITY || secrets.VISION_PROVIDER_PRIORITY }}
           LLM_TEMPERATURE: ${{ vars.LLM_TEMPERATURE || secrets.LLM_TEMPERATURE }}
+          # 精简 JEAC 例行分析的输入/输出；可将 Variable 改为 standard 恢复完整提示词。
+          ANALYSIS_PROMPT_PROFILE: ${{ vars.ANALYSIS_PROMPT_PROFILE || 'compact' }}
+          ANALYSIS_MAX_OUTPUT_TOKENS: ${{ vars.ANALYSIS_MAX_OUTPUT_TOKENS || '2400' }}
           LLM_USAGE_HMAC_SECRET: ${{ secrets.LLM_USAGE_HMAC_SECRET }}
           LLM_USAGE_HMAC_KEY_VERSION: ${{ vars.LLM_USAGE_HMAC_KEY_VERSION || secrets.LLM_USAGE_HMAC_KEY_VERSION }}
           LLM_PROMPT_CACHE_TELEMETRY_ENABLED: ${{ vars.LLM_PROMPT_CACHE_TELEMETRY_ENABLED || secrets.LLM_PROMPT_CACHE_TELEMETRY_ENABLED }}
@@ -129,6 +132,15 @@ jobs:
           LLM_PRIMARY_MODELS: ${{ vars.LLM_PRIMARY_MODELS || secrets.LLM_PRIMARY_MODELS }}
           LLM_PRIMARY_ENABLED: ${{ vars.LLM_PRIMARY_ENABLED || secrets.LLM_PRIMARY_ENABLED }}
           LLM_PRIMARY_EXTRA_HEADERS: ${{ vars.LLM_PRIMARY_EXTRA_HEADERS || secrets.LLM_PRIMARY_EXTRA_HEADERS }}
+
+          # Groq OpenAI-compatible channel (supports a comma-separated Secret deployment pool).
+          LLM_GROQ_PROTOCOL: ${{ vars.LLM_GROQ_PROTOCOL || secrets.LLM_GROQ_PROTOCOL }}
+          LLM_GROQ_BASE_URL: ${{ vars.LLM_GROQ_BASE_URL || secrets.LLM_GROQ_BASE_URL }}
+          LLM_GROQ_API_KEY: ${{ secrets.LLM_GROQ_API_KEY }}
+          LLM_GROQ_API_KEYS: ${{ secrets.LLM_GROQ_API_KEYS }}
+          LLM_GROQ_MODELS: ${{ vars.LLM_GROQ_MODELS || secrets.LLM_GROQ_MODELS }}
+          LLM_GROQ_ENABLED: ${{ vars.LLM_GROQ_ENABLED || secrets.LLM_GROQ_ENABLED }}
+          LLM_GROQ_EXTRA_HEADERS: ${{ vars.LLM_GROQ_EXTRA_HEADERS || secrets.LLM_GROQ_EXTRA_HEADERS }}
 
           LLM_SECONDARY_PROTOCOL: ${{ vars.LLM_SECONDARY_PROTOCOL || secrets.LLM_SECONDARY_PROTOCOL }}
           LLM_SECONDARY_BASE_URL: ${{ vars.LLM_SECONDARY_BASE_URL || secrets.LLM_SECONDARY_BASE_URL }}
