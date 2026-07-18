@@ -31,6 +31,7 @@ from data_provider.realtime_types import ChipDistribution
 from src.analyzer import (
     GeminiAnalyzer,
     AnalysisResult,
+    build_data_unavailable_result,
     fill_price_position_if_needed,
     normalize_chip_structure_availability,
     populate_decision_action_fields,
@@ -545,6 +546,22 @@ class StockAnalysisPipeline:
                               f"买入信号={trend_result.buy_signal.value}, 评分={trend_result.signal_score}")
             except Exception as e:
                 logger.warning(f"{stock_name}({code}) 趋势分析失败: {e}", exc_info=True)
+
+            if trend_result is None or not getattr(trend_result, "is_evaluable", False):
+                logger.warning(
+                    "%s(%s) 核心日线不足，停止技术评分与 LLM 交易建议",
+                    stock_name,
+                    code,
+                )
+                reasons = []
+                if trend_result and getattr(trend_result, "risk_factors", None):
+                    reasons = list(trend_result.risk_factors)
+                return build_data_unavailable_result(
+                    code,
+                    stock_name,
+                    reasons=reasons or ["核心日线资料未取得或不足，技术判定已暂停"],
+                    report_language=report_language,
+                )
 
             if use_agent:
                 logger.info(f"{stock_name}({code}) 启用 Agent 模式进行分析")
@@ -2892,7 +2909,14 @@ class StockAnalysisPipeline:
             
             if not success:
                 logger.warning(f"[{code}] 数据获取失败: {error}")
-                # 即使获取失败，也尝试用已有数据分析
+                # Never score or sell from an empty core-data set. This is
+                # particularly important for ETFs whose dedicated route failed.
+                return build_data_unavailable_result(
+                    code,
+                    code,
+                    reasons=[error or "核心日线数据未取得"],
+                    report_language=getattr(self.config, "report_language", "zh"),
+                )
             else:
                 self._emit_progress(16, f"{code}：行情数据准备完成")
             
