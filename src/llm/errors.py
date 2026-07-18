@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any, Callable, Dict, List, Optional
 
 from src.llm.generation_params import (
@@ -149,3 +150,94 @@ def call_litellm_with_param_recovery(
                 request_overrides=retry_kwargs,
             )
         return response
+
+
+_RATE_LIMIT_MARKERS = (
+    "rate limit",
+    "ratelimit",
+    "too many requests",
+    "status code 429",
+    "http 429",
+    "no deployments available",
+)
+_RETRY_AFTER_PATTERNS = (
+    re.compile(r"(?:retry|try) again in\s*(?P<seconds>\d+(?:\.\d+)?)\s*(?:s|sec|second)", re.IGNORECASE),
+    re.compile(r"retry-after\s*[:=]\s*(?P<seconds>\d+(?:\.\d+)?)", re.IGNORECASE),
+)
+
+
+def is_litellm_rate_limit_error(error: BaseException) -> bool:
+    """Return true only for provider throttling errors that are safe to retry."""
+    text = _normalized_error_text(error)
+    return bool(text) and any(marker in text for marker in _RATE_LIMIT_MARKERS)
+
+
+def get_litellm_retry_after_seconds(
+    error: BaseException,
+    *,
+    default_seconds: float = 10.0,
+    max_wait_seconds: float = 90.0,
+) -> float:
+    """Extract a provider retry delay without trusting unbounded error text."""
+    text = _normalized_error_text(error)
+    for pattern in _RETRY_AFTER_PATTERNS:
+        match = pattern.search(text)
+        if match is None:
+            continue
+        try:
+            value = float(match.group("seconds"))
+        except (TypeError, ValueError):
+            continue
+        if value >= 0:
+            return min(value, max_wait_seconds)
+    return min(max(default_seconds, 0.0), max_wait_seconds)
+
+
+def call_litellm_with_rate_limit_recovery(
+    call: Callable[[Dict[str, Any]], Any],
+    *,
+    model: str,
+    call_kwargs: Dict[str, Any],
+    model_list: Optional[List[Dict[str, Any]]] = None,
+    cache_recovery: bool = True,
+    logger: Optional[Any] = None,
+    max_rate_limit_retries: int = 2,
+    max_wait_seconds: float = 90.0,
+    sleep: Callable[[float], None] = time.sleep,
+) -> Any:
+    """Wait for provider throttling windows, then retry the same logical call.
+
+    A 429 is not treated as a failed investment analysis.  We honor the
+    provider's retry delay when present and leave the original exception intact
+    after the bounded retry budget is exhausted.
+    """
+    attempts = 0
+    while True:
+        try:
+            return call_litellm_with_param_recovery(
+                call,
+                model=model,
+                call_kwargs=call_kwargs,
+                model_list=model_list,
+                cache_recovery=cache_recovery,
+                logger=logger,
+            )
+        except Exception as exc:
+            if not is_litellm_rate_limit_error(exc) or attempts >= max_rate_limit_retries:
+                raise
+            wait_seconds = get_litellm_retry_after_seconds(
+                exc,
+                max_wait_seconds=max_wait_seconds,
+            )
+            if wait_seconds <= 0:
+                raise
+            attempts += 1
+            if logger is not None:
+                logger.warning(
+                    "[LiteLLM] %s rate-limited; waiting %.1fs before retry %d/%d",
+                    model,
+                    wait_seconds,
+                    attempts,
+                    max_rate_limit_retries,
+                )
+            sleep(wait_seconds)
