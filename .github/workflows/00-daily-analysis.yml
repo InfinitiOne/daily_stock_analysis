@@ -407,6 +407,12 @@ jobs:
           # 运行配置 ⬅️ 新增！
           # ==========================================
           REPORT_TYPE: ${{ vars.REPORT_TYPE || secrets.REPORT_TYPE || 'simple' }}
+          # Private delivery: documents are uploaded only to the configured
+          # Google Drive folder, never to a public GitHub artifact.
+          PRIVATE_REPORT_EXPORT_ENABLED: ${{ vars.PRIVATE_REPORT_EXPORT_ENABLED || 'false' }}
+          GOOGLE_DRIVE_REPORT_FOLDER_ID: ${{ vars.GOOGLE_DRIVE_REPORT_FOLDER_ID }}
+          GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON }}
+          JEAC_REPORT_KIND: daily
           REPORT_LANGUAGE: ${{ vars.REPORT_LANGUAGE || secrets.REPORT_LANGUAGE || '' }}
           REPORT_SHOW_LLM_MODEL: ${{ vars.REPORT_SHOW_LLM_MODEL || secrets.REPORT_SHOW_LLM_MODEL || 'true' }}
           SINGLE_STOCK_NOTIFY: ${{ vars.SINGLE_STOCK_NOTIFY || secrets.SINGLE_STOCK_NOTIFY || 'false' }}
@@ -573,31 +579,20 @@ jobs:
             python main.py $MARKET_REVIEW_ARG $FORCE_RUN_ARG
           fi
       
-      - name: 上传分析报告
+      - name: 上传受限诊断信息
         uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: analysis-reports-${{ github.run_number }}
-          path: |
-            reports/
-            logs/
-          retention-days: 30
+          # Never upload reports/: report documents are delivered only to
+          # the private Google Drive folder.
+          name: analysis-diagnostics-${{ github.run_number }}
+          path: logs/
+          retention-days: 7
+          if-no-files-found: warn
       
-      - name: 显示运行结果
+      - name: 显示运行状态
         if: always()
         run: |
-          echo ""
-          echo "=========================================="
-          echo "📊 分析完成"
-          echo "=========================================="
-          if [ -d "reports" ] && [ "$(ls -A reports 2>/dev/null)" ]; then
-            echo "生成的报告:"
-            ls -la reports/
-          else
-            echo "⚠️ 未生成报告文件"
-          fi
-          echo ""
-          if [ -f "logs/stock_analysis_$(date +%Y%m%d).log" ]; then
-            echo "📜 最近日志（最后 30 行）:"
-            tail -30 logs/stock_analysis_*.log 2>/dev/null || echo "无日志"
-          fi
+          echo "分析作业已结束。"
+          echo "正式报告仅会上传至配置的私人 Google Drive；GitHub 不显示或列出报告文件。"
+          echo "如需排错，请由具权限的维护者查看受限诊断 artifact。"

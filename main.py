@@ -712,6 +712,70 @@ def _save_weekly_integrity_block_report(
         logger.warning("保存周报完整性阻断说明失败: %s", exc)
 
 
+def _private_report_export_enabled() -> bool:
+    return os.getenv("PRIVATE_REPORT_EXPORT_ENABLED", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _results_ready_for_private_export(results: List[Any]) -> bool:
+    """Return true only when every requested stock has a usable completed result."""
+    return bool(results) and all(
+        bool(getattr(item, "success", False))
+        and getattr(item, "data_status", "available") == "available"
+        for item in results
+    )
+
+
+def _export_private_report(*, report_kind: str, markdown: str) -> None:
+    """Upload a completed report to private Drive storage, never GitHub artifacts."""
+    if not _private_report_export_enabled():
+        return
+
+    from src.services.private_report_delivery import (
+        PrivateReportDelivery,
+        PrivateReportDeliveryError,
+    )
+
+    try:
+        delivered = PrivateReportDelivery.from_environment().export(
+            report_kind=report_kind,
+            markdown=markdown,
+        )
+    except PrivateReportDeliveryError:
+        logger.exception("[private-report] delivery failed; report is not published")
+        raise
+
+    for artifact in delivered:
+        logger.info(
+            "[private-report] uploaded kind=%s format=%s name=%s drive_file_id=%s",
+            artifact.report_kind,
+            artifact.format,
+            artifact.file_name,
+            artifact.drive_file_id,
+        )
+
+
+def _build_private_report_markdown(
+    *,
+    notifier: Any,
+    results: List[Any],
+    market_report: str,
+    report_type: str,
+) -> str:
+    """Build one source document for private DOCX/PPTX export."""
+    sections: List[str] = []
+    if market_report:
+        sections.append(f"# 市场环境\n\n{market_report}")
+    if results:
+        stock_report = notifier.generate_aggregate_report(results, report_type)
+        sections.append(f"# 持仓与候选股\n\n{stock_report}")
+    return "\n\n---\n\n".join(sections)
+
+
 def run_full_analysis(
     config: Config,
     args: argparse.Namespace,
@@ -749,11 +813,12 @@ def run_full_analysis(
                 _weekly_candidate_codes(),
             )
             stock_codes = list(weekly_expected_codes)
+            # The weekly portfolio is supplied by a secret.  Do not expose
+            # holdings in logs when the source repository is public.
             logger.info(
-                "[weekly-portfolio] 已读取 %s，持仓/候选共 %d 档: %s",
+                "[weekly-portfolio] 已读取 %s，持仓/候选共 %d 档（代码已隐藏）",
                 weekly_portfolio.path.name,
                 len(stock_codes),
-                ", ".join(stock_codes),
             )
         # Issue #529: Hot-reload STOCK_LIST from .env on non-weekly runs.
         elif stock_codes is None:
@@ -1034,6 +1099,9 @@ def run_full_analysis(
                 weekly_report,
                 f"weekly_report_{datetime.now().strftime('%Y%m%d')}.md",
             )
+            # The private exporter is reached only after market, holding, and
+            # candidate data have all passed the weekly integrity gate.
+            _export_private_report(report_kind="weekly", markdown=weekly_report)
             if not args.no_notify and pipeline.notifier.is_available():
                 if not pipeline.notifier.send(
                     weekly_report,
@@ -1043,6 +1111,25 @@ def run_full_analysis(
                     logger.warning("完整周报推送失败")
             logger.info("完整周报已通过市场、持仓与候选股数据完整性检查")
             return True
+
+        # Daily document export has the same fail-closed rule: no incomplete
+        # stock result and no missing market section may create a private file.
+        if _private_report_export_enabled():
+            if _results_ready_for_private_export(results) and market_report:
+                private_markdown = _build_private_report_markdown(
+                    notifier=pipeline.notifier,
+                    results=results,
+                    market_report=market_report,
+                    report_type=getattr(config, "report_type", "simple"),
+                )
+                _export_private_report(
+                    report_kind=os.getenv("JEAC_REPORT_KIND", "daily"),
+                    markdown=private_markdown,
+                )
+            else:
+                logger.warning(
+                    "[private-report] daily export skipped: market or stock data did not pass integrity"
+                )
 
         # Issue #190: 合并推送（个股+大盘复盘）
         if merge_notification and (results or market_report) and not args.no_notify:
