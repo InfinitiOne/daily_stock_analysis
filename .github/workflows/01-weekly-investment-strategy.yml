@@ -62,13 +62,20 @@ jobs:
           MARKET_REVIEW_ENABLED: ${{ vars.MARKET_REVIEW_ENABLED || 'true' }}
           MARKET_REVIEW_REGION: ${{ vars.MARKET_REVIEW_REGION || 'tw' }}
           REPORT_TYPE: full
+          # Private delivery: documents are uploaded only to the configured
+          # Google Drive folder, never to a public GitHub artifact.
+          PRIVATE_REPORT_EXPORT_ENABLED: ${{ vars.PRIVATE_REPORT_EXPORT_ENABLED || 'false' }}
+          GOOGLE_DRIVE_REPORT_FOLDER_ID: ${{ vars.GOOGLE_DRIVE_REPORT_FOLDER_ID }}
+          GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON }}
+          JEAC_REPORT_KIND: weekly
         run: python main.py --force-run
-      - name: Upload reports and diagnostics
+      - name: Upload limited diagnostics
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: jeac-weekly-report-${{ github.run_number }}
-          path: |
-            reports/
-            logs/
-          retention-days: 30
+          # Never upload reports/: completed DOCX/PPTX files live only in
+          # the private Google Drive folder.
+          name: jeac-weekly-diagnostics-${{ github.run_number }}
+          path: logs/
+          retention-days: 7
+          if-no-files-found: warn
