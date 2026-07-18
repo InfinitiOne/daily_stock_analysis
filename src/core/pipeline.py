@@ -2951,6 +2951,19 @@ class StockAnalysisPipeline:
             return result
             
         except Exception as e:
+            # A Groq/OpenAI-compatible 429 is an availability interruption, not
+            # a stock-level sell signal.  Preserve the reason so strict weekly
+            # mode emits only its blocked diagnostic report.
+            error_text = str(e)
+            if "429" in error_text or "rate limit" in error_text.lower():
+                logger.error("[%s] LLM 限额触发，停止该标的报告生成: %s", code, error_text)
+                return build_data_unavailable_result(
+                    code,
+                    code,
+                    reasons=[f"LLM 服务回传 429／限额；报告生成已暂停：{error_text}"],
+                    report_language=getattr(self.config, "report_language", "zh"),
+                    data_status="paused",
+                )
             # 捕获所有异常，确保单股失败不影响整体
             logger.exception(f"[{code}] 处理过程发生未知异常: {e}")
             return None
