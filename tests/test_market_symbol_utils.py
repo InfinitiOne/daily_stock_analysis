@@ -4,6 +4,7 @@
 from src.services.market_symbol_utils import (
     get_suffix_market,
     is_suffix_market_symbol,
+    is_tw_etf_symbol,
     normalize_suffix_market_symbol,
     suffix_base_lookup_allowed,
 )
@@ -35,3 +36,11 @@ def test_bare_base_lookup_is_only_allowed_for_jp_kr_mvp() -> None:
     assert suffix_base_lookup_allowed("035720.KQ") is True
     assert suffix_base_lookup_allowed("2330.TW") is False
     assert suffix_base_lookup_allowed("6505.TWO") is False
+
+
+def test_taiwan_etf_symbols_keep_the_taiwan_route() -> None:
+    assert get_suffix_market("00403A.TW") == "tw"
+    assert is_suffix_market_symbol("00403A.TW", "tw") is True
+    assert is_tw_etf_symbol("00403A.TW") is True
+    assert is_tw_etf_symbol("00940.TW") is True
+    assert is_tw_etf_symbol("2330.TW") is False
