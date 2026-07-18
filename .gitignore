@@ -88,3 +88,6 @@ static/
 /apps/dsa-desktop/dist/
 /apps/dsa-desktop/node_modules/
 docs/specs/
+
+# Private weekly portfolio master is injected at runtime from GitHub Secrets.
+/08-01_Current_Portfolio.md
