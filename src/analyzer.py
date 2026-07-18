@@ -1818,10 +1818,12 @@ class AnalysisResult:
         return []
 
     def get_emoji(self) -> str:
-        """根据操作建议返回对应 emoji"""
+        """根据操作建议返回对应 emoji."""
+        if self.data_status != "available":
+            return "⚪"
         _, emoji, _ = get_signal_level(
             self.operation_advice,
-            self.sentiment_score,
+            self.sentiment_score if self.sentiment_score is not None else 50,
             self.report_language,
         )
         return emoji
