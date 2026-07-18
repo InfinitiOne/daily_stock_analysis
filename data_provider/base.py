@@ -26,7 +26,7 @@ import pandas as pd
 import numpy as np
 from src.data.stock_index_loader import get_index_stock_name
 from src.data.stock_mapping import STOCK_NAME_MAP, is_meaningful_stock_name
-from src.services.market_symbol_utils import is_suffix_market_symbol
+from src.services.market_symbol_utils import is_suffix_market_symbol, is_tw_etf_symbol
 from src.services.run_diagnostics import record_provider_run, record_provider_run_started
 from .fundamental_adapter import AkshareFundamentalAdapter
 from .yfinance_fundamental_adapter import YfinanceFundamentalAdapter
@@ -772,6 +772,19 @@ class DataFetcherManager:
             )
         return kept
 
+    @staticmethod
+    def _filter_tw_etf_daily_fetchers(fetchers: List[BaseFetcher]) -> List[BaseFetcher]:
+        """Dedicated Taiwan ETF route; never fall back to mainland providers."""
+        supported_names = {"FugleFetcher", "FinMindFetcher", "YfinanceFetcher"}
+        kept = [fetcher for fetcher in fetchers if fetcher.name in supported_names]
+        skipped = [fetcher.name for fetcher in fetchers if fetcher.name not in supported_names]
+        if skipped:
+            logger.info(
+                "[ETF专用路由] 台股 ETF 跳过非 ETF 数据源: %s",
+                ", ".join(skipped),
+            )
+        return kept
+
     @classmethod
     def _filter_fetchers_by_capability(
         cls,
@@ -1304,9 +1317,13 @@ class DataFetcherManager:
         is_jp = (not is_us) and (not is_hk) and _is_jp_market(stock_code)
         is_kr = (not is_us) and (not is_hk) and _is_kr_market(stock_code)
         is_tw = (not is_us) and (not is_hk) and _is_tw_market(stock_code)
+        is_tw_etf = is_tw and is_tw_etf_symbol(stock_code)
         market = "us" if is_us else "hk" if is_hk else "jp" if is_jp else "kr" if is_kr else "tw" if is_tw else "cn"
         if market != "cn":
             fetchers = self._filter_daily_fetchers_for_market(fetchers, market)
+        if is_tw_etf:
+            logger.info("[ETF专用路由] %s: Fugle -> FinMind -> Yahoo Finance", stock_code)
+            fetchers = self._filter_tw_etf_daily_fetchers(fetchers)
         fetchers = self._filter_fetchers_by_capability(fetchers, capability="daily_data")
         total_fetchers = len(fetchers)
 
