@@ -692,12 +692,16 @@ def _save_weekly_integrity_block_report(
         if item is None:
             status, detail = "未取得／暫停判定", "未完成分析"
         else:
-            status = (
-                "已取得"
-                if getattr(item, "data_status", "available") == "available"
-                else "未取得／暫停判定"
+            is_available = (
+                getattr(item, "data_status", "available") == "available"
+                and bool(getattr(item, "success", False))
             )
-            detail = "；".join(getattr(item, "data_missing_reasons", []) or []) or "-"
+            status = "已取得" if is_available else "未取得／暫停判定"
+            detail = (
+                "；".join(getattr(item, "data_missing_reasons", []) or [])
+                or str(getattr(item, "error_message", "") or "")
+                or "-"
+            )
         lines.append(f"| {code} | {status} | {detail} |")
     try:
         notifier.save_report_to_file(
