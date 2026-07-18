@@ -2840,7 +2840,21 @@ class NotificationBuilder:
         labels = get_report_labels(report_language)
         lines = [f"📊 **{labels['summary_heading']}**", ""]
 
-        for r in sorted(results, key=self._score_sort_key, reverse=True):
+        def score_value(item: AnalysisResult) -> float:
+            if getattr(item, "data_status", "available") != "available":
+                return -1.0
+            try:
+                return float(getattr(item, "sentiment_score", None))
+            except (TypeError, ValueError):
+                return -1.0
+
+        def display_score(item: AnalysisResult) -> str:
+            if getattr(item, "data_status", "available") != "available":
+                return "Not available" if report_language == "en" else "未取得"
+            value = getattr(item, "sentiment_score", None)
+            return str(value) if value is not None else ("Not available" if report_language == "en" else "未取得")
+
+        for r in sorted(results, key=score_value, reverse=True):
             display_action = display_action_fields_for_result(
                 r,
                 report_language=report_language,
@@ -2861,13 +2875,13 @@ class NotificationBuilder:
             )
             signal_text, emoji, _ = get_signal_level(
                 signal_action or display_advice,
-                self._score_value(r) or 50,
+                score_value(r) if score_value(r) >= 0 else 50,
                 report_language,
             )
             name = get_localized_stock_name(r.name, r.code, report_language)
             lines.append(
                 f"{emoji} {name}({r.code}): {display_advice} | "
-                f"{labels['score_label']} {self._display_score(r, report_language)}"
+                f"{labels['score_label']} {display_score(r)}"
             )
 
         return "\n".join(lines)
