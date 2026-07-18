@@ -3125,7 +3125,10 @@ class StockAnalysisPipeline:
             unavailable = [
                 getattr(result, "code", "unknown")
                 for result in results
-                if getattr(result, "data_status", "available") != "available"
+                if (
+                    getattr(result, "data_status", "available") != "available"
+                    or not getattr(result, "success", False)
+                )
             ]
             missing = sorted(code for code in expected if code not in completed)
             if unavailable or missing:
