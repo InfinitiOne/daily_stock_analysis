@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from src.analyzer import build_data_unavailable_result
+from src.analyzer import apply_placeholder_fill, build_data_unavailable_result, check_content_integrity
 from src.stock_analyzer import BuySignal, StockTrendAnalyzer
 
 
@@ -12,6 +12,12 @@ def test_core_data_unavailable_is_not_scored_or_marked_for_sale() -> None:
     assert result.decision_type == "hold"
     assert result.action == "watch"
     assert result.operation_advice == "未取得／暫停判定"
+
+    passed, missing = check_content_integrity(result)
+    apply_placeholder_fill(result, ["sentiment_score"])
+    assert passed is True
+    assert missing == []
+    assert result.sentiment_score is None
 
 
 def test_empty_history_never_becomes_a_zero_score_sell_signal() -> None:
