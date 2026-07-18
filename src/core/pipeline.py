@@ -3134,7 +3134,11 @@ class StockAnalysisPipeline:
                     unavailable,
                     missing,
                 )
-                return results
+            else:
+                logger.info(
+                    "[weekly-integrity] 股票资料完整；延后报告与推送，等待市场资料验证"
+                )
+            return results
         
         # 保存报告到本地文件（无论是否推送通知都保存）
         if results and not dry_run:
