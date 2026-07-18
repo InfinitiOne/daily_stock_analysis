@@ -31,9 +31,6 @@ concurrency:
 jobs:
   analyze:
     runs-on: ubuntu-latest
-    # 兼容误将 STOCK_LIST 配到同名 Environment variables 的场景；
-    # 推荐位置仍是 Settings -> Secrets and variables -> Actions -> Repository variables。
-    environment: STOCK_LIST
     # 添加超时限制，防止任务卡死
     timeout-minutes: ${{ fromJSON(vars.ANALYSIS_TIMEOUT_MINUTES || '30') }}
     
@@ -54,6 +51,17 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: 载入受保护持仓主档
+        env:
+          JEAC_CURRENT_PORTFOLIO_MARKDOWN: ${{ secrets.JEAC_CURRENT_PORTFOLIO_MARKDOWN }}
+        run: |
+          if [ -z "$JEAC_CURRENT_PORTFOLIO_MARKDOWN" ]; then
+            echo "JEAC_CURRENT_PORTFOLIO_MARKDOWN 未设定；为避免使用过期或错误的 STOCK_LIST，本次日報停止。"
+            exit 1
+          fi
+          printf '%s\n' "$JEAC_CURRENT_PORTFOLIO_MARKDOWN" > 08-01_Current_Portfolio.md
+          chmod 600 08-01_Current_Portfolio.md
       
       - name: 创建必要目录
         run: |
@@ -280,6 +288,10 @@ jobs:
           FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
           FINMIND_PRIORITY: ${{ vars.FINMIND_PRIORITY || '1' }}
           FINMIND_TIMEOUT_SECONDS: ${{ vars.FINMIND_TIMEOUT_SECONDS || '12' }}
+          # Optional US-market providers.  If they and Yahoo fail, the
+          # no-key Nasdaq/FRED public-web route is still attempted.
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
           # Longbridge OpenAPI（美股/港股实时行情字段补充；不设则仅 YFinance/AkShare，无 [Longbridge] 调用）
           LONGBRIDGE_OAUTH_CLIENT_ID: ${{ vars.LONGBRIDGE_OAUTH_CLIENT_ID || secrets.LONGBRIDGE_OAUTH_CLIENT_ID }}
           LONGBRIDGE_OAUTH_TOKEN_CACHE_B64: ${{ secrets.LONGBRIDGE_OAUTH_TOKEN_CACHE_B64 }}
@@ -398,9 +410,10 @@ jobs:
           # ==========================================
           # 自选股配置
           # ==========================================
-          # 避免直接写入 STOCK_LIST，保留同名 Environment variables 的 runner 环境值。
-          STOCK_LIST_CONFIG: ${{ vars.STOCK_LIST || secrets.STOCK_LIST }}
-          MARKET_REVIEW_REGION: ${{ vars.MARKET_REVIEW_REGION || secrets.MARKET_REVIEW_REGION || 'cn' }}
+          # 每日日報固定讀取受保護持倉主檔；不以 STOCK_LIST 覆蓋。
+          JEAC_PORTFOLIO_MODE: "true"
+          # 只產生台股與美股市場環境，絕不以 A 股資料代替。
+          MARKET_REVIEW_REGION: "tw,us"
           MARKET_REVIEW_COLOR_SCHEME: ${{ vars.MARKET_REVIEW_COLOR_SCHEME || secrets.MARKET_REVIEW_COLOR_SCHEME || 'green_up' }}
           
           # ==========================================
@@ -416,7 +429,8 @@ jobs:
           GOOGLE_DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.GOOGLE_DRIVE_OAUTH_TOKEN_JSON }}
           GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON }}
           JEAC_REPORT_KIND: daily
-          REPORT_LANGUAGE: ${{ vars.REPORT_LANGUAGE || secrets.REPORT_LANGUAGE || '' }}
+          # 所有對使用者的日報、DOCX 與 PPTX 均輸出臺灣繁體中文。
+          REPORT_LANGUAGE: "zh-TW"
           REPORT_SHOW_LLM_MODEL: ${{ vars.REPORT_SHOW_LLM_MODEL || secrets.REPORT_SHOW_LLM_MODEL || 'true' }}
           SINGLE_STOCK_NOTIFY: ${{ vars.SINGLE_STOCK_NOTIFY || secrets.SINGLE_STOCK_NOTIFY || 'false' }}
           MARKET_REVIEW_ENABLED: ${{ vars.MARKET_REVIEW_ENABLED || secrets.MARKET_REVIEW_ENABLED || 'true' }}
@@ -436,15 +450,9 @@ jobs:
           REALTIME_SOURCE_PRIORITY: ${{ vars.REALTIME_SOURCE_PRIORITY || 'tencent,akshare_sina,efinance,akshare_em' }}
           
         run: |
-          # 解析自选股配置：
-          # 1. Repository/Environment secrets 或 Repository variables（STOCK_LIST_CONFIG）
-          # 2. 同名 Environment variables 注入的 runner 环境变量（STOCK_LIST）
-          # 3. 最小默认值
-          if [ -n "${STOCK_LIST_CONFIG:-}" ]; then
-            export STOCK_LIST="$STOCK_LIST_CONFIG"
-          elif [ -z "${STOCK_LIST:-}" ]; then
-            export STOCK_LIST="600519"
-          fi
+          # 日報只使用上一個步驟載入的持倉主檔。即使 Repository / Environment
+          # 仍留有 STOCK_LIST，也不會覆蓋或縮減持倉範圍。
+          export JEAC_PORTFOLIO_MODE="true"
 
           # 处理 LITELLM YAML 配置文件
           if [ -n "$LITELLM_CONFIG_YAML" ] && [ -n "$LITELLM_CONFIG" ]; then
@@ -459,46 +467,19 @@ jobs:
           # 判断运行模式
           MODE="${{ github.event.inputs.mode || 'full' }}"
 
-          # 市场范围护栏：
-          # - 现有大盘复盘不支持台湾市场（.TW/.TWO）。
-          # - 不允许在仅台股清单上误用默认 A 股（cn）复盘。
-          # - 纯美股或台美混合清单会把默认复盘改为美股；台股部分会明确缺少大盘基准。
-          MARKET_REVIEW_ARG=""
-          NORMALIZED_STOCK_LIST="${STOCK_LIST^^}"
-          HAS_TW_SYMBOL=false
-          HAS_US_SYMBOL=false
-          if [[ "$NORMALIZED_STOCK_LIST" =~ \.(TW|TWO) ]]; then
-            HAS_TW_SYMBOL=true
-          fi
-          IFS=',; ' read -r -a STOCK_SYMBOLS <<< "$NORMALIZED_STOCK_LIST"
-          for STOCK_SYMBOL in "${STOCK_SYMBOLS[@]}"; do
-            if [[ "$STOCK_SYMBOL" =~ ^[A-Z][A-Z0-9.-]*$ ]] && [[ ! "$STOCK_SYMBOL" =~ \.(TW|TWO)$ ]]; then
-              HAS_US_SYMBOL=true
-              break
-            fi
-          done
-
-          if [[ "${MARKET_REVIEW_REGION,,}" == "cn" ]] && [[ "$HAS_TW_SYMBOL" == "true" ]]; then
-            if [[ "$HAS_US_SYMBOL" == "true" ]]; then
-              export MARKET_REVIEW_REGION="us"
-              echo "⚠️ 检测到台美混合清单：默认大盘复盘改为美股；台湾市场大盘复盘尚未接入，不会以 A 股数据替代。"
-            else
-              MARKET_REVIEW_ARG="--no-market-review"
-              echo "⚠️ 检测到仅台股清单：跳过默认 A 股大盘复盘，避免错误市场基准。台湾市场大盘复盘尚未接入。"
-            fi
-          elif [[ "${MARKET_REVIEW_REGION,,}" == "cn" ]] && [[ "$HAS_US_SYMBOL" == "true" ]]; then
-            export MARKET_REVIEW_REGION="us"
-            echo "ℹ️ 检测到美股清单：默认大盘复盘改为美股。"
-          fi
+          # 持倉含台股與美股時，固定同時取得 TWII/TWOII 與
+          # SPX/IXIC/SOX/VIX；不得以 A 股資料取代任一市場。
+          export MARKET_REVIEW_REGION="tw,us"
+          export REPORT_LANGUAGE="zh-TW"
           
           echo "=========================================="
-          echo "🚀 A股自选股智能分析系统"
+          echo "🚀 JEAC 台股／美股投資分析系統"
           echo "=========================================="
-          echo "⏰ 时间: $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')"
-          echo "🎯 运行模式: $MODE"
-          echo "📊 自选股: $STOCK_LIST"
-          echo "🌐 大盘复盘区域: $MARKET_REVIEW_REGION"
-          echo "📝 报告类型: $REPORT_TYPE"
+          echo "⏰ 時間: $(TZ='Asia/Taipei' date '+%Y-%m-%d %H:%M:%S')"
+          echo "🎯 執行模式: $MODE"
+          echo "📊 標的來源: 08-01_Current_Portfolio.md（受保護持倉主檔）"
+          echo "🌐 市場範圍: $MARKET_REVIEW_REGION"
+          echo "📝 報告類型: $REPORT_TYPE"
           echo ""
           echo "=========================================="
           echo "📋 配置检查"
@@ -571,15 +552,11 @@ jobs:
 
           # 执行分析
           if [ "$MODE" = "market-only" ]; then
-            if [ -n "$MARKET_REVIEW_ARG" ]; then
-              echo "❌ 当前清单为仅台股，且台湾市场大盘复盘尚未接入；请改用 full/stocks-only，或先配置支持的 MARKET_REVIEW_REGION。"
-              exit 2
-            fi
             python main.py --market-review $FORCE_RUN_ARG
           elif [ "$MODE" = "stocks-only" ]; then
             python main.py --no-market-review $FORCE_RUN_ARG
           else
-            python main.py $MARKET_REVIEW_ARG $FORCE_RUN_ARG
+            python main.py $FORCE_RUN_ARG
           fi
       
       - name: 上传受限诊断信息

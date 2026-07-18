@@ -20,7 +20,7 @@ import uuid
 from src.config import get_config
 from src.notification import NotificationService
 from src.market_analyzer import MarketAnalyzer
-from src.report_language import normalize_report_language
+from src.report_language import ensure_traditional_chinese, normalize_report_language
 from src.search_service import SearchService
 from src.analyzer import AnalysisResult, GeminiAnalyzer
 from src.llm.generation_backend import GenerationError
@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 MARKET_REVIEW_HISTORY_CODE = "MARKET"
 MARKET_REVIEW_REPORT_TYPE = "market_review"
 _MARKET_REVIEW_MARKETS = (
+    ('tw', 'tw_title', '台股'),
     ('cn', 'cn_title', 'A 股'),
     ('hk', 'hk_title', '港股'),
     ('us', 'us_title', '美股'),
@@ -115,6 +116,7 @@ def _get_market_review_text(language: str) -> dict[str, str]:
             "root_title": "# 🎯 Market Review",
             "push_title": "🎯 Market Review",
             "cn_title": "# A-share Market Recap",
+            "tw_title": "# Taiwan Market Recap",
             "us_title": "# US Market Recap",
             "hk_title": "# HK Market Recap",
             "jp_title": "# Japan Market Recap",
@@ -126,6 +128,7 @@ def _get_market_review_text(language: str) -> dict[str, str]:
             "root_title": "# 🎯 시황 리뷰",
             "push_title": "🎯 시황 리뷰",
             "cn_title": "# 중국 A주 시황 리뷰",
+            "tw_title": "# 대만 시황 리뷰",
             "us_title": "# 미국 시황 리뷰",
             "hk_title": "# 홍콩 시황 리뷰",
             "jp_title": "# 일본 시황 리뷰",
@@ -133,14 +136,15 @@ def _get_market_review_text(language: str) -> dict[str, str]:
             "separator": "> 다음 시장 시황 리뷰",
         }
     return {
-        "root_title": "# 🎯 大盘复盘",
-        "push_title": "🎯 大盘复盘",
-        "cn_title": "# A股大盘复盘",
-        "us_title": "# 美股大盘复盘",
-        "hk_title": "# 港股大盘复盘",
-        "jp_title": "# 日股大盘复盘",
-        "kr_title": "# 韩股大盘复盘",
-        "separator": "> 以下为下一市场大盘复盘",
+        "root_title": "# 🎯 市場複盤",
+        "push_title": "🎯 市場複盤",
+        "tw_title": "# 台股大盤複盤",
+        "cn_title": "# A股大盤複盤",
+        "us_title": "# 美股大盤複盤",
+        "hk_title": "# 港股大盤複盤",
+        "jp_title": "# 日股大盤複盤",
+        "kr_title": "# 韓股大盤複盤",
+        "separator": "> 以下為下一市場大盤複盤",
     }
 
 
@@ -160,15 +164,17 @@ def _resolve_market_review_regions(raw_region: Optional[str]) -> list[str]:
     if region == 'both':
         return list(_MARKET_REVIEW_REGION_ORDER)
     if ',' in region:
-        requested = {
-            item.strip().lower()
-            for item in region.split(',')
-            if item.strip().lower() in _VALID_MARKET_REVIEW_REGIONS
-        }
-        return [market for market in _MARKET_REVIEW_REGION_ORDER if market in requested] or ['cn']
+        requested = {item.strip().lower() for item in region.split(',') if item.strip()}
+        invalid = requested - _VALID_MARKET_REVIEW_REGIONS
+        if invalid:
+            raise ValueError(f"Unsupported MARKET_REVIEW_REGION: {', '.join(sorted(invalid))}")
+        selected = [market for market in _MARKET_REVIEW_REGION_ORDER if market in requested]
+        if selected:
+            return selected
+        raise ValueError("MARKET_REVIEW_REGION must include at least one supported market")
     if region in _VALID_MARKET_REVIEW_REGIONS:
         return [region]
-    return ['cn']
+    raise ValueError(f"Unsupported MARKET_REVIEW_REGION: {region}")
 
 
 def run_market_review(
@@ -299,6 +305,12 @@ def run_market_review(
             }
         
         if review_report:
+            # The final report boundary is the only safe place to convert all
+            # model/template wording without changing internal payload keys.
+            review_report = ensure_traditional_chinese(
+                review_report,
+                getattr(runtime_config, "report_language", ""),
+            )
             market_review_payload = _build_combined_market_review_payload(
                 review_report=review_report,
                 payloads=market_review_payloads,
@@ -537,8 +549,16 @@ def _render_market_review_payload_body(payload: Dict[str, Any]) -> str:
                 title_prefix = str(market_payload.get("title") or market.upper()).strip()
                 wrapper_title = _get_market_review_market_heading(payload.get("language"), market)
                 segment_title_prefix = title_prefix
-                if wrapper_title and _extract_market_markdown_segment(original_markdown, wrapper_title):
-                    segment_title_prefix = wrapper_title
+                # Historical payloads may contain Simplified Chinese headings,
+                # while the Taiwan-facing renderer now emits Traditional
+                # Chinese.  Find the actual wrapper in either script before
+                # falling back to a duplicate generic date title; otherwise a
+                # sector table in the first market can hide every later
+                # market's sector block.
+                for heading_variant in _market_heading_variants(wrapper_title):
+                    if _extract_market_markdown_segment(original_markdown, heading_variant):
+                        segment_title_prefix = heading_variant
+                        break
                 rendered = _append_missing_sector_payload_block_to_market_segment(
                     rendered,
                     market_payload,
@@ -553,6 +573,29 @@ def _render_market_review_payload_body(payload: Dict[str, Any]) -> str:
                 parts.append(_render_single_market_review_payload(market_payload))
         return "\n\n---\n\n".join(part for part in parts if part).strip()
     return _render_single_market_review_payload(payload)
+
+
+def _market_heading_variants(heading: Any) -> tuple[str, ...]:
+    """Return compatible Simplified/Traditional variants of a market heading.
+
+    Only headings are used for matching an existing Markdown segment.  The
+    report's final presentation conversion remains unchanged.
+    """
+
+    base = str(heading or "").strip()
+    if not base:
+        return ()
+    variants = [base]
+    try:
+        from opencc import OpenCC
+
+        for converter_name in ("t2s", "s2twp"):
+            converted = OpenCC(converter_name).convert(base).strip()
+            if converted and converted not in variants:
+                variants.append(converted)
+    except ImportError:
+        pass
+    return tuple(variants)
 
 
 def _render_single_market_review_payload(payload: Dict[str, Any]) -> str:

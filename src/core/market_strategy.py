@@ -129,6 +129,39 @@ US_BLUEPRINT = MarketStrategyBlueprint(
     ],
 )
 
+TW_BLUEPRINT = MarketStrategyBlueprint(
+    region="tw",
+    title="台股市場三段式複盤策略",
+    positioning="聚焦加權指數、櫃買指數、臺美半導體連動與產業輪動，形成下一交易日的風險部位計畫。",
+    principles=[
+        "先確認加權指數與櫃買指數方向，再檢查美股科技／費城半導體的隔夜風險。",
+        "三大法人、融資融券、月營收或產業資料僅在實際取得時解讀；未取得必須標示。",
+        "結論需轉換為進攻、均衡或防守的部位與失效條件，不以缺失資料推論賣出。",
+    ],
+    dimensions=[
+        StrategyDimension(
+            name="指數結構",
+            objective="判斷台股處於趨勢、整理或風險收縮階段。",
+            checkpoints=["加權／櫃買是否同向", "量價與關鍵區間是否確認", "臺美科技與半導體風險是否同步"],
+        ),
+        StrategyDimension(
+            name="資金與籌碼",
+            objective="以已取得的法人、融資券與成交資訊辨識風險偏好。",
+            checkpoints=["三大法人資料是否已取得", "強勢族群是否有量價確認", "資料不足時不推定籌碼方向"],
+        ),
+        StrategyDimension(
+            name="產業輪動",
+            objective="追蹤半導體、AI 伺服器、PCB、金融與防禦類股的相對強弱。",
+            checkpoints=["領漲題材是否有基本面或事件佐證", "美股科技與台股供應鏈是否相互印證", "高波動主題是否出現失效訊號"],
+        ),
+    ],
+    action_framework=[
+        "進攻：加權／櫃買同步轉強，且領漲族群有量價確認。",
+        "均衡：指數或產業分歧，僅保留相對強勢且停損明確的部位。",
+        "防守：指數失守、海外科技風險升高或資料顯示籌碼惡化時，優先保留現金與控制回撤。",
+    ],
+)
+
 HK_BLUEPRINT = MarketStrategyBlueprint(
     region="hk",
     title="港股市场三段式复盘策略",
@@ -233,6 +266,8 @@ def get_market_strategy_blueprint(region: str) -> MarketStrategyBlueprint:
     """Return strategy blueprint by market region."""
     if region == "us":
         return US_BLUEPRINT
+    if region == "tw":
+        return TW_BLUEPRINT
     if region == "hk":
         return HK_BLUEPRINT
     if region == "jp":

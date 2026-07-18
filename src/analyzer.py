@@ -89,6 +89,7 @@ from src.report_language import (
     get_unknown_text,
     get_chip_unavailable_text,
     infer_decision_type_from_advice,
+    is_traditional_chinese_requested,
     is_chip_placeholder_value,
     localize_chip_health,
     localize_confidence_level,
@@ -1752,6 +1753,7 @@ class AnalysisResult:
     # ========== 基本面上下文（仅运行时，用于通知拼装；不持久化到 to_dict）==========
     fundamental_context: Optional[Dict[str, Any]] = None
     market_structure_context: Optional[Dict[str, Any]] = None
+    technical_evidence: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
@@ -1794,6 +1796,7 @@ class AnalysisResult:
             'change_pct': self.change_pct,
             'model_used': self.model_used,
             'market_structure_context': self.market_structure_context,
+            'technical_evidence': self.technical_evidence,
         }
 
     def get_core_conclusion(self) -> str:
@@ -2486,10 +2489,11 @@ class GeminiAnalyzer:
         language_rule = {
             "en": "Write every human-readable value in English.",
             "ko": "Write every human-readable value in Korean.",
-        }.get(lang, "所有面向用户的文本值使用繁体中文与台湾投资用语。")
+        }.get(lang, "所有面向使用者的文字值使用繁體中文與臺灣投資用語，禁止簡體中文。")
         return f"""你是 JEAC Enterprise 5.0 投资决策分析师。{market_role}
 
-只使用输入中提供且有日期、来源或状态的证据；数据缺失时明确写“数据缺失，无法判断”，不得补造价格、法人、财报、新闻、目标价或公司名称。
+只使用输入中提供且有日期、来源或状态的证据；数据缺失时明确写“未取得／暫停判定”，不得补造价格、法人、财报、新闻、目标价或公司名称。
+SEPA、Stage 2、VCP、Pivot 只能依据 `technical_evidence.data_status=available` 的资料判断；其余情形必须标示“未取得／暫停判定”，不得把缺失资料转换成 0 分、卖出或看空。
 先判断趋势/Stage、价格位置、量价与风险报酬；台股有法人或营收资料时才引用。分数不等于买入：风险报酬低于 2、停损过远、资料不完整或关键条件未确认时，动作必须为 watch/hold/avoid。
 输出只能是一個有效 JSON 对象，不要 Markdown。保留输入事实，不复述 raw payload、token 或密钥。
 {market_guidelines}
@@ -3856,6 +3860,7 @@ JSON 键名保持英文；decision_type 只能为 buy|hold|sell；{language_rule
 
 行情：收盘={today.get("close", "N/A")}；涨跌={today.get("pct_chg", "N/A")}%；量={self._format_volume(today.get("volume"))}
 技术：MA5={today.get("ma5", "N/A")}；MA10={today.get("ma10", "N/A")}；MA20={today.get("ma20", "N/A")}；趋势={trend.get("trend_status", "N/A")}；均线={trend.get("ma_alignment", context.get("ma_status", "N/A"))}；信号={trend.get("buy_signal", "N/A")}；评分={trend.get("signal_score", "N/A")}
+SEPA证据：{trend.get("technical_evidence", "未取得／暫停判定")}
 即时数据：价格={realtime.get("price", "N/A")}；量比={realtime.get("volume_ratio", "N/A")}；换手={realtime.get("turnover_rate", "N/A")}
 
 资料限制与状态：
@@ -3864,10 +3869,10 @@ JSON 键名保持英文；decision_type 只能为 buy|hold|sell；{language_rule
 近期期情：
 {compact_news or "无可用近期新闻。"}
 
-只输出下列 JSON（缺失数据使用“数据缺失，无法判断”，无法验证的价格点位填“N/A”）：
+只输出下列 JSON（缺失数据使用“未取得／暫停判定”，无法验证的价格点位填“N/A”；不可把缺失资料转成 0 分或卖出）：
 {{
   "stock_name": "{stock_name}",
-  "sentiment_score": 0,
+  "sentiment_score": null,
   "trend_prediction": "",
   "operation_advice": "",
   "decision_type": "hold",
@@ -4392,6 +4397,7 @@ JSON 键名保持英文；decision_type 只能为 buy|hold|sell；{language_rule
 - 所有 JSON 键名必须保持不变，不要翻译键名。
 - `decision_type` 必须保持为 `buy`、`hold`、`sell`。
 - 所有面向用户的人类可读文本值必须使用中文。
+- 所有文字值使用繁體中文與臺灣投資用語，禁止簡體中文。
 - 当数据缺失时，请使用中文直接说明“{no_data_text}，无法判断”。
 """
         

@@ -11,6 +11,8 @@ from src.report_language import (
     get_sentiment_label,
     get_signal_level,
     infer_decision_type_from_advice,
+    is_traditional_chinese_requested,
+    ensure_traditional_chinese,
     localize_operation_advice,
     localize_trend_prediction,
     localize_bias_status,
@@ -19,6 +21,13 @@ from src.report_language import (
 
 
 class ReportLanguageTestCase(unittest.TestCase):
+    def test_traditional_chinese_locale_is_preserved_at_document_boundary(self) -> None:
+        self.assertTrue(is_traditional_chinese_requested("zh-TW"))
+        self.assertEqual(
+            ensure_traditional_chinese("市场资料不足，暂停判定。", "zh-TW"),
+            "市場資料不足，暫停判定。",
+        )
+
     def test_get_signal_level_handles_compound_sell_advice(self) -> None:
         signal_text, emoji, signal_tag = get_signal_level("卖出/观望", 60, "zh")
 

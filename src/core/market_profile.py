@@ -6,7 +6,7 @@
 供 MarketAnalyzer 按 region 切换 A 股/港股/美股/日韩复盘行为。
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
 
 
@@ -14,7 +14,7 @@ from typing import List
 class MarketProfile:
     """大盘复盘市场区域配置"""
 
-    region: str  # "cn" | "hk" | "us" | "jp" | "kr"
+    region: str  # "tw" | "cn" | "hk" | "us" | "jp" | "kr"
     # 用于判断整体走势的指数代码，cn 用上证 000001，us 用标普 SPX
     mood_index_code: str
     # 新闻搜索关键词
@@ -25,6 +25,23 @@ class MarketProfile:
     has_market_stats: bool
     # 市场概况是否包含板块涨跌（A 股有，美股暂无）
     has_sector_rankings: bool
+    # A weekly report is not allowed to infer a market regime without these indices.
+    required_index_codes: List[str] = field(default_factory=list)
+
+
+TW_PROFILE = MarketProfile(
+    region="tw",
+    mood_index_code="TWII",
+    news_queries=[
+        "台股 加權指數 收盤",
+        "櫃買指數 收盤",
+        "台股 三大法人 半導體",
+    ],
+    prompt_index_hint="分析臺灣加權指數與櫃買指數的走勢、量價與產業輪動；僅引用已提供資料，未取得資料須明確標示。",
+    has_market_stats=False,
+    has_sector_rankings=False,
+    required_index_codes=["TWII", "TWOII"],
+)
 
 
 CN_PROFILE = MarketProfile(
@@ -51,6 +68,7 @@ US_PROFILE = MarketProfile(
     prompt_index_hint="分析标普500、纳斯达克、道指等各指数走势特点",
     has_market_stats=False,
     has_sector_rankings=False,
+    required_index_codes=["SPX", "IXIC", "SOX", "VIX"],
 )
 
 HK_PROFILE = MarketProfile(
@@ -95,6 +113,8 @@ KR_PROFILE = MarketProfile(
 
 def get_profile(region: str) -> MarketProfile:
     """根据 region 返回对应的 MarketProfile"""
+    if region == "tw":
+        return TW_PROFILE
     if region == "us":
         return US_PROFILE
     if region == "hk":

@@ -2098,5 +2098,65 @@ class MainScheduleModeTestCase(unittest.TestCase):
         main._env_bootstrapped = False
 
 
+def test_private_report_source_evidence_lists_failover_without_blank_cells() -> None:
+    """Daily/weekly documents must expose source outcomes, not only final data."""
+    result = SimpleNamespace(
+        code="00403A.TW",
+        data_sources="daily:TwseTpexFetcher",
+        data_status="available",
+        data_missing_reasons=[],
+        technical_evidence={
+            "data_status": "available",
+            "sepa": "available",
+            "stage_2": "available",
+            "vcp": "available",
+            "pivot": "available",
+            "daily_source_trace": [
+                {"provider": "FugleFetcher", "status": "failed", "reason": "temporary outage"},
+                {"provider": "FinMindFetcher", "status": "skipped", "reason": "not configured"},
+                {"provider": "TwseTpexFetcher", "status": "success", "reason": "取得 300 根日線"},
+            ],
+        },
+        fundamental_context={"source_chain": []},
+    )
+    review = SimpleNamespace(
+        market_review_payload={
+            "markets": {
+                "tw": {
+                    "data_integrity": {
+                        "status": "available",
+                        "received_indices": ["TWII", "TWOII"],
+                        "source": "TwseTpexFetcher",
+                        "source_status": [
+                            {"provider": "TWSE", "status": "success", "reason": "取得 TWII"},
+                            {"provider": "TPEx", "status": "success", "reason": "取得 TWOII"},
+                        ],
+                    }
+                },
+                "us": {
+                    "data_integrity": {
+                        "status": "available",
+                        "received_indices": ["SPX", "IXIC", "SOX", "VIX"],
+                        "source": "NasdaqWebFetcher",
+                        "source_status": [
+                            {"provider": "NasdaqWebFetcher", "status": "success", "reason": "取得 SPX, IXIC, SOX, VIX"},
+                        ],
+                    }
+                },
+            }
+        }
+    )
+
+    markdown = main._weekly_data_sources_markdown([result], review)
+
+    assert "Fugle" in markdown
+    assert "失敗後切換備援" in markdown
+    assert "FinMind" in markdown
+    assert "TWSE 官方資料" in markdown
+    assert "TWSE | 已取得" in markdown
+    assert "TPEx | 已取得" in markdown
+    assert "未提供來源呼叫紀錄" not in markdown
+
+
 if __name__ == "__main__":
     unittest.main()

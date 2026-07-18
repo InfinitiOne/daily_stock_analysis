@@ -27,7 +27,11 @@ import numpy as np
 from src.data.stock_index_loader import get_index_stock_name
 from src.data.stock_mapping import STOCK_NAME_MAP, is_meaningful_stock_name
 from src.services.market_symbol_utils import is_suffix_market_symbol, is_tw_etf_symbol
-from src.services.run_diagnostics import record_provider_run, record_provider_run_started
+from src.services.run_diagnostics import (
+    record_provider_run,
+    record_provider_run_started,
+    sanitize_diagnostic_text,
+)
 from .fundamental_adapter import AkshareFundamentalAdapter
 from .yfinance_fundamental_adapter import YfinanceFundamentalAdapter
 from .realtime_types import CircuitBreaker
@@ -621,12 +625,15 @@ class DataFetcherManager:
         "TickFlowFetcher": {"cn"},
         "FugleFetcher": {"tw"},
         "FinMindFetcher": {"tw"},
+        "TwseTpexFetcher": {"tw"},
         "PytdxFetcher": {"cn"},
         "BaostockFetcher": {"cn"},
         "YfinanceFetcher": {"cn", "hk", "us", "jp", "kr", "tw"},
         "LongbridgeFetcher": {"hk", "us"},
         "FinnhubFetcher": {"us"},
         "AlphaVantageFetcher": {"us"},
+        "NasdaqWebFetcher": {"us"},
+        "StooqFetcher": {"us"},
     }
     _daily_source_health = CircuitBreaker(failure_threshold=3, cooldown_seconds=300.0)
     _CONCEPT_RANKINGS_CACHE_TTL_SECONDS = 300.0
@@ -648,6 +655,14 @@ class DataFetcherManager:
         self._fetcher_call_locks_lock = RLock()
         self._stock_name_cache: Dict[str, str] = {}
         self._stock_name_cache_lock = RLock()
+        # Keep a small, per-symbol audit trail of the daily-bar fallback
+        # route.  The trace is intentionally in-memory: it is attached to the
+        # resulting report evidence, not persisted as an opaque cache.  This
+        # prevents a source outage from being mistaken for a zero-score input.
+        self._daily_source_trace: Dict[str, List[Dict[str, str]]] = {}
+        self._daily_source_trace_lock = RLock()
+        self._main_index_source_status: Dict[str, List[Dict[str, str]]] = {}
+        self._main_index_source_status_lock = RLock()
         
         if fetchers:
             # 按优先级排序
@@ -680,6 +695,104 @@ class DataFetcherManager:
             self._stock_name_cache = {}
         if not hasattr(self, "_stock_name_cache_lock") or self._stock_name_cache_lock is None:
             self._stock_name_cache_lock = RLock()
+        if not hasattr(self, "_daily_source_trace") or self._daily_source_trace is None:
+            self._daily_source_trace = {}
+        if not hasattr(self, "_daily_source_trace_lock") or self._daily_source_trace_lock is None:
+            self._daily_source_trace_lock = RLock()
+        if not hasattr(self, "_main_index_source_status") or self._main_index_source_status is None:
+            self._main_index_source_status = {}
+        if not hasattr(self, "_main_index_source_status_lock") or self._main_index_source_status_lock is None:
+            self._main_index_source_status_lock = RLock()
+
+    @staticmethod
+    def _daily_trace_code(stock_code: str) -> str:
+        return normalize_stock_code(str(stock_code or "")).upper()
+
+    def _reset_daily_source_trace(self, stock_code: str) -> None:
+        self._ensure_concurrency_guards()
+        code = self._daily_trace_code(stock_code)
+        with self._daily_source_trace_lock:
+            self._daily_source_trace[code] = []
+
+    def _record_daily_source_trace(
+        self,
+        stock_code: str,
+        provider: str,
+        status: str,
+        reason: Optional[Any] = None,
+    ) -> None:
+        """Record a compact, report-safe daily-bar provider outcome."""
+        self._ensure_concurrency_guards()
+        code = self._daily_trace_code(stock_code)
+        item = {
+            "provider": str(provider or "未命名資料源"),
+            "status": str(status or "unknown"),
+        }
+        safe_reason = sanitize_diagnostic_text(reason, max_length=160)
+        if safe_reason:
+            item["reason"] = safe_reason
+        with self._daily_source_trace_lock:
+            trace = self._daily_source_trace.setdefault(code, [])
+            # A source can be checked more than once while an ETF falls
+            # through to the official exchange.  Preserve the first outcome
+            # unless the later one is a successful retrieval.
+            previous_index = next(
+                (index for index, value in enumerate(trace) if value.get("provider") == item["provider"]),
+                None,
+            )
+            if previous_index is None:
+                trace.append(item)
+            elif item["status"] == "success":
+                trace[previous_index] = item
+
+    def get_daily_source_trace(self, stock_code: str) -> List[Dict[str, str]]:
+        """Return a copy of the last daily-bar fallback evidence for a symbol."""
+        self._ensure_concurrency_guards()
+        code = self._daily_trace_code(stock_code)
+        with self._daily_source_trace_lock:
+            return [dict(item) for item in self._daily_source_trace.get(code, [])]
+
+    def _reset_main_index_source_status(self, region: str) -> None:
+        self._ensure_concurrency_guards()
+        with self._main_index_source_status_lock:
+            self._main_index_source_status[str(region or "").lower()] = []
+
+    def _record_main_index_source_status(
+        self,
+        region: str,
+        provider: str,
+        status: str,
+        reason: Optional[Any] = None,
+    ) -> None:
+        """Capture auditable market-index route status for reports."""
+        self._ensure_concurrency_guards()
+        normalized_region = str(region or "").lower()
+        item = {
+            "provider": str(provider or "未命名資料源"),
+            "status": str(status or "unknown"),
+        }
+        safe_reason = sanitize_diagnostic_text(reason, max_length=160)
+        if safe_reason:
+            item["reason"] = safe_reason
+        with self._main_index_source_status_lock:
+            trace = self._main_index_source_status.setdefault(normalized_region, [])
+            previous_index = next(
+                (index for index, value in enumerate(trace) if value.get("provider") == item["provider"]),
+                None,
+            )
+            if previous_index is None:
+                trace.append(item)
+            elif item["status"] == "success":
+                trace[previous_index] = item
+
+    def get_main_index_source_status(self, region: str) -> List[Dict[str, str]]:
+        """Return the index-provider status recorded for the current request."""
+        self._ensure_concurrency_guards()
+        with self._main_index_source_status_lock:
+            return [
+                dict(item)
+                for item in self._main_index_source_status.get(str(region or "").lower(), [])
+            ]
 
     def _get_fetchers_snapshot(self) -> List[BaseFetcher]:
         self._ensure_concurrency_guards()
@@ -775,7 +888,7 @@ class DataFetcherManager:
     @staticmethod
     def _filter_tw_etf_daily_fetchers(fetchers: List[BaseFetcher]) -> List[BaseFetcher]:
         """Dedicated Taiwan ETF route; never fall back to mainland providers."""
-        supported_names = {"FugleFetcher", "FinMindFetcher", "YfinanceFetcher"}
+        supported_names = {"FugleFetcher", "FinMindFetcher", "YfinanceFetcher", "TwseTpexFetcher"}
         kept = [fetcher for fetcher in fetchers if fetcher.name in supported_names]
         skipped = [fetcher.name for fetcher in fetchers if fetcher.name not in supported_names]
         if skipped:
@@ -1175,10 +1288,13 @@ class DataFetcherManager:
         from .tickflow_fetcher import TickFlowFetcher
         from .fugle_fetcher import FugleFetcher
         from .finmind_fetcher import FinMindFetcher
+        from .twse_tpex_fetcher import TwseTpexFetcher
         from .pytdx_fetcher import PytdxFetcher
         from .baostock_fetcher import BaostockFetcher
         from .yfinance_fetcher import YfinanceFetcher
         from .longbridge_fetcher import LongbridgeFetcher
+        from .nasdaq_web_fetcher import NasdaqWebFetcher
+        from .stooq_fetcher import StooqFetcher
         config = get_config()
         # 创建所有数据源实例（优先级在各 Fetcher 的 __init__ 中确定）
         efinance = EfinanceFetcher()
@@ -1187,6 +1303,8 @@ class DataFetcherManager:
         pytdx = PytdxFetcher()      # 通达信数据源（可配 PYTDX_HOST/PYTDX_PORT）
         baostock = BaostockFetcher()
         yfinance = YfinanceFetcher()
+        nasdaq_web = NasdaqWebFetcher()
+        stooq = StooqFetcher()
         optional_fetchers: List[BaseFetcher] = []
 
         tushare_token = (getattr(config, "tushare_token", None) or "").strip()
@@ -1221,6 +1339,10 @@ class DataFetcherManager:
         else:
             logger.debug("[data source init] skip FinMindFetcher because FINMIND_API_TOKEN is not configured")
 
+        # Public official-exchange fallback.  It stays after the faster API
+        # providers and Yahoo, but remains available when all of them fail.
+        optional_fetchers.append(TwseTpexFetcher())
+
         if LongbridgeFetcher.has_configured_credentials(config):
             optional_fetchers.append(LongbridgeFetcher())  # 长桥（美股/港股兜底，懒加载）
         else:
@@ -1250,6 +1372,8 @@ class DataFetcherManager:
                 pytdx,
                 baostock,
                 yfinance,
+                nasdaq_web,
+                stooq,
                 *optional_fetchers,
             ]
 
@@ -1302,6 +1426,7 @@ class DataFetcherManager:
 
         # Normalize code (strip SH/SZ prefix etc.)
         stock_code = normalize_stock_code(stock_code)
+        self._reset_daily_source_trace(stock_code)
 
         fetchers = self._get_fetchers_snapshot()
         errors = []
@@ -1322,10 +1447,26 @@ class DataFetcherManager:
         if market != "cn":
             fetchers = self._filter_daily_fetchers_for_market(fetchers, market)
         if is_tw_etf:
-            logger.info("[ETF专用路由] %s: Fugle -> FinMind -> Yahoo Finance", stock_code)
+            logger.info("[ETF專用路由] %s: Fugle -> FinMind -> Yahoo Finance -> TWSE/TPEx 官方網站", stock_code)
             fetchers = self._filter_tw_etf_daily_fetchers(fetchers)
         fetchers = self._filter_fetchers_by_capability(fetchers, capability="daily_data")
         total_fetchers = len(fetchers)
+
+        # Reports must show whether the Taiwan API routes were really used,
+        # skipped because they were not configured, or failed before the
+        # public official fallback took over.  Do this before the first call
+        # so a successful early provider does not make the unneeded route look
+        # like an empty value in the report.
+        if is_tw:
+            routed_fetcher_names = {fetcher.name for fetcher in fetchers}
+            for expected_source in ("FugleFetcher", "FinMindFetcher", "YfinanceFetcher", "TwseTpexFetcher"):
+                if expected_source not in routed_fetcher_names:
+                    self._record_daily_source_trace(
+                        stock_code,
+                        expected_source,
+                        "skipped",
+                        "未設定或暫時不可用，未進入本輪路由",
+                    )
 
         if total_fetchers == 0:
             market_label = "美股指数" if is_us_index else "美股" if is_us else "港股" if is_hk else "台股" if is_tw else "A股"
@@ -1333,18 +1474,21 @@ class DataFetcherManager:
             logger.error(f"[数据源终止] {stock_code} 获取失败: {error_summary}")
             raise DataFetchError(error_summary)
 
-        # 美股（含美股指数）使用专用路由；港股走下方通用数据源循环
-        # Failover chain: Finnhub(P2) -> AlphaVantage(P3) -> Yfinance(P4) -> Longbridge(P5)
-        # When Longbridge preferred: Longbridge -> Finnhub -> AlphaVantage -> Yfinance
+        # 美股（含美股指数）使用专用路由；港股走下方通用数据源循环。
+        # When every configured API/Yahoo source fails, keep trying the public
+        # Nasdaq endpoint before the final Stooq best-effort route.  This makes
+        # a provider outage observable rather than silently turning a holding
+        # into a missing/zero-valued input.
         if is_us:
             prefer_lb = self._longbridge_preferred(capability="daily_data") and not is_us_index
             if is_us_index:
-                # 指数始终 YFinance 首选（Longbridge 不提供指数K线）
-                source_order = ["YfinanceFetcher", "FinnhubFetcher"]
+                # Public Nasdaq/FRED is independent from Yahoo and provides a
+                # resilient daily index route (SPX/IXIC/SOX/VIX).
+                source_order = ["NasdaqWebFetcher", "YfinanceFetcher", "FinnhubFetcher", "StooqFetcher"]
             elif prefer_lb:
-                source_order = ["LongbridgeFetcher", "FinnhubFetcher", "AlphaVantageFetcher", "YfinanceFetcher"]
+                source_order = ["LongbridgeFetcher", "FinnhubFetcher", "AlphaVantageFetcher", "YfinanceFetcher", "NasdaqWebFetcher", "StooqFetcher"]
             else:
-                source_order = ["FinnhubFetcher", "AlphaVantageFetcher", "YfinanceFetcher", "LongbridgeFetcher"]
+                source_order = ["FinnhubFetcher", "AlphaVantageFetcher", "YfinanceFetcher", "LongbridgeFetcher", "NasdaqWebFetcher", "StooqFetcher"]
             market_label = "美股指数" if is_us_index else "美股"
 
             for order_index, src_name in enumerate(source_order):
@@ -1353,11 +1497,19 @@ class DataFetcherManager:
                     if order_index + 1 < len(source_order)
                     else None
                 )
+                matched_source = False
                 for attempt, fetcher in enumerate(fetchers, start=1):
                     if fetcher.name != src_name:
                         continue
+                    matched_source = True
                     if not self._is_daily_source_available(fetcher, market):
                         errors.append(self._daily_source_unavailable_error(fetcher))
+                        self._record_daily_source_trace(
+                            stock_code,
+                            fetcher.name,
+                            "skipped",
+                            "資料源未設定或暫時不可用",
+                        )
                         break
                     attempt_start = time.time()
                     try:
@@ -1395,6 +1547,12 @@ class DataFetcherManager:
                                 f"rows={len(df)}, elapsed={elapsed:.2f}s"
                             )
                             self._record_daily_source_success(fetcher, market)
+                            self._record_daily_source_trace(
+                                stock_code,
+                                fetcher.name,
+                                "success",
+                                f"取得 {len(df)} 根日線",
+                            )
                             return df, fetcher.name
                         duration_ms = int((time.time() - attempt_start) * 1000)
                         record_provider_run(
@@ -1410,6 +1568,12 @@ class DataFetcherManager:
                         )
                         if df is not None and df.empty:
                             self._record_daily_source_success(fetcher, market)
+                        self._record_daily_source_trace(
+                            stock_code,
+                            fetcher.name,
+                            "failed",
+                            "回傳空日線資料，已切換下一來源",
+                        )
                     except Exception as e:
                         error_type, error_reason = summarize_exception(e)
                         error_msg = f"[{fetcher.name}] ({error_type}) {error_reason}"
@@ -1429,8 +1593,21 @@ class DataFetcherManager:
                             f"error_type={error_type}, reason={error_reason}"
                         )
                         self._record_daily_source_failure(fetcher, market, error_reason)
+                        self._record_daily_source_trace(
+                            stock_code,
+                            fetcher.name,
+                            "failed",
+                            error_reason,
+                        )
                         errors.append(error_msg)
                     break
+                if not matched_source:
+                    self._record_daily_source_trace(
+                        stock_code,
+                        src_name,
+                        "skipped",
+                        "未設定或不支援此標的",
+                    )
 
             error_summary = f"{market_label} {stock_code} 获取失败:\n" + "\n".join(errors)
             elapsed = time.time() - request_start
@@ -1440,6 +1617,12 @@ class DataFetcherManager:
         for attempt, fetcher in enumerate(fetchers, start=1):
             if not self._is_daily_source_available(fetcher, market):
                 errors.append(self._daily_source_unavailable_error(fetcher))
+                self._record_daily_source_trace(
+                    stock_code,
+                    fetcher.name,
+                    "skipped",
+                    "資料源未設定或暫時不可用",
+                )
                 continue
             attempt_start = time.time()
             fallback_to = fetchers[attempt].name if attempt < total_fetchers else None
@@ -1475,6 +1658,12 @@ class DataFetcherManager:
                         f"rows={len(df)}, elapsed={elapsed:.2f}s"
                     )
                     self._record_daily_source_success(fetcher, market)
+                    self._record_daily_source_trace(
+                        stock_code,
+                        fetcher.name,
+                        "success",
+                        f"取得 {len(df)} 根日線",
+                    )
                     return df, fetcher.name
                 duration_ms = int((time.time() - attempt_start) * 1000)
                 record_provider_run(
@@ -1490,6 +1679,12 @@ class DataFetcherManager:
                 )
                 if df is not None and df.empty:
                     self._record_daily_source_success(fetcher, market)
+                self._record_daily_source_trace(
+                    stock_code,
+                    fetcher.name,
+                    "failed",
+                    "回傳空日線資料，已切換下一來源",
+                )
 
             except Exception as e:
                 error_type, error_reason = summarize_exception(e)
@@ -1510,6 +1705,12 @@ class DataFetcherManager:
                     f"error_type={error_type}, reason={error_reason}"
                 )
                 self._record_daily_source_failure(fetcher, market, error_reason)
+                self._record_daily_source_trace(
+                    stock_code,
+                    fetcher.name,
+                    "failed",
+                    error_reason,
+                )
                 errors.append(error_msg)
                 if attempt < total_fetchers:
                     next_fetcher = fetchers[attempt]
@@ -1807,6 +2008,12 @@ class DataFetcherManager:
             if quote is None and is_tw:
                 quote = self._try_fetcher_quote(stock_code, "YfinanceFetcher")
                 primary_source = "YfinanceFetcher"
+            if quote is None and is_tw:
+                # Official exchange close is deliberately the final Taiwan
+                # quote route.  It is labelled delayed/partial by the fetcher
+                # instead of being misrepresented as a real-time price.
+                quote = self._try_fetcher_quote(stock_code, "TwseTpexFetcher")
+                primary_source = "TwseTpexFetcher"
             if quote is not None:
                 logger.info(f"[实时行情] {market_label} {stock_code} 成功获取 (来源: {primary_source})")
                 return self._enrich_realtime_quote(
@@ -1846,6 +2053,9 @@ class DataFetcherManager:
                     primary_quote = self._supplement_quote(
                         stock_code, primary_quote, extra_src,
                     )
+            if is_us and not is_us_index and primary_quote is None:
+                primary_quote = self._try_fetcher_quote(stock_code, "NasdaqWebFetcher")
+                fallback_from = primary_token
             if primary_quote is not None:
                 return self._enrich_realtime_quote(
                     primary_quote,
@@ -2494,8 +2704,18 @@ class DataFetcherManager:
         logger.info(f"[股票名称] 批量获取完成，成功 {len(result)}/{len(stock_codes)}")
         return result
 
-    def get_main_indices(self, region: str = "cn") -> List[Dict[str, Any]]:
-        """获取主要指数实时行情（自动切换数据源）"""
+    def get_main_indices_with_source(self, region: str = "cn") -> Tuple[List[Dict[str, Any]], str]:
+        """取得主要指數行情，連同實際成功資料來源回傳。
+
+        Taiwan and US reviews have an explicit completeness contract.  Their
+        index fetcher therefore *merges* complementary public sources instead
+        of returning early after the first partial response.  For example, a
+        Yahoo outage for ``^TWOII`` can still be filled by TPEx OpenAPI, and a
+        missing ``SOX`` can be filled by Nasdaq after FRED supplied SPX/VIX.
+        """
+        region = str(region or "cn").lower()
+        self._reset_main_index_source_status(region)
+
         if region == "cn":
             tickflow_fetcher = self._get_tickflow_fetcher()
             if tickflow_fetcher is not None:
@@ -2503,22 +2723,109 @@ class DataFetcherManager:
                     data = tickflow_fetcher.get_main_indices(region=region)
                     if data:
                         logger.info("[TickFlowFetcher] 获取指数行情成功")
-                        return data
+                        return data, tickflow_fetcher.name
                 except Exception as e:
                     logger.warning(f"[TickFlowFetcher] 获取指数行情失败: {e}")
 
-        for fetcher in self._fetchers:
+        target_required = {
+            "tw": {"TWII", "TWOII"},
+            "us": {"SPX", "IXIC", "SOX", "VIX"},
+        }.get(region, set())
+        fetchers = self._get_fetchers_snapshot()
+
+        if region == "tw":
+            preferred = ("TwseTpexFetcher", "YfinanceFetcher")
+            lookup = {fetcher.name: fetcher for fetcher in fetchers}
+            fetchers = [lookup[name] for name in preferred if name in lookup]
+            if "TwseTpexFetcher" not in lookup:
+                self._record_main_index_source_status(
+                    region, "TWSE", "skipped", "官方 TWSE／TPEx 路由未初始化"
+                )
+                self._record_main_index_source_status(
+                    region, "TPEx", "skipped", "官方 TWSE／TPEx 路由未初始化"
+                )
+        elif region == "us":
+            preferred = ("NasdaqWebFetcher", "YfinanceFetcher", "FinnhubFetcher", "StooqFetcher")
+            lookup = {fetcher.name: fetcher for fetcher in fetchers}
+            fetchers = [lookup[name] for name in preferred if name in lookup]
+
+        merged: Dict[str, Dict[str, Any]] = {}
+        sources: List[str] = []
+        for fetcher in fetchers:
             if region == "cn" and fetcher.name == "TickFlowFetcher":
                 continue
             try:
                 data = fetcher.get_main_indices(region=region)
-                if data:
-                    logger.info(f"[{fetcher.name}] 获取指数行情成功")
-                    return data
+                if not data:
+                    if fetcher.name == "TwseTpexFetcher":
+                        self._record_main_index_source_status(region, "TWSE", "failed", "未回傳核心指數")
+                        self._record_main_index_source_status(region, "TPEx", "failed", "未回傳核心指數")
+                    else:
+                        self._record_main_index_source_status(region, fetcher.name, "failed", "未回傳核心指數")
+                    continue
+                usable = 0
+                usable_codes: set[str] = set()
+                for item in data:
+                    if not isinstance(item, dict):
+                        continue
+                    code = str(item.get("code") or "").strip().upper()
+                    current = item.get("current")
+                    if not code or current is None:
+                        continue
+                    # Keep the first usable value: the Taiwan/US preferred
+                    # list puts the official public source before aggregators.
+                    if code not in merged:
+                        merged[code] = item
+                        usable += 1
+                    usable_codes.add(code)
+                if fetcher.name == "TwseTpexFetcher":
+                    self._record_main_index_source_status(
+                        region,
+                        "TWSE",
+                        "success" if "TWII" in usable_codes else "failed",
+                        "取得 TWII" if "TWII" in usable_codes else "未回傳 TWII",
+                    )
+                    self._record_main_index_source_status(
+                        region,
+                        "TPEx",
+                        "success" if "TWOII" in usable_codes else "failed",
+                        "取得 TWOII" if "TWOII" in usable_codes else "未回傳 TWOII",
+                    )
+                elif usable:
+                    self._record_main_index_source_status(
+                        region,
+                        fetcher.name,
+                        "success",
+                        "取得 " + ", ".join(sorted(usable_codes)),
+                    )
+                else:
+                    self._record_main_index_source_status(
+                        region,
+                        fetcher.name,
+                        "failed",
+                        "未回傳可用核心指數",
+                    )
+                if usable:
+                    sources.append(fetcher.name)
+                    logger.info("[%s] 获取指数行情成功 count=%d", fetcher.name, usable)
+                    if not target_required:
+                        return list(merged.values()), fetcher.name
+                    if target_required.issubset(set(merged)):
+                        return list(merged.values()), " + ".join(sources)
             except Exception as e:
                 logger.warning(f"[{fetcher.name}] 获取指数行情失败: {e}")
+                if fetcher.name == "TwseTpexFetcher":
+                    self._record_main_index_source_status(region, "TWSE", "failed", e)
+                    self._record_main_index_source_status(region, "TPEx", "failed", e)
+                else:
+                    self._record_main_index_source_status(region, fetcher.name, "failed", e)
                 continue
-        return []
+        return list(merged.values()), " + ".join(sources) if sources else "未取得"
+
+    def get_main_indices(self, region: str = "cn") -> List[Dict[str, Any]]:
+        """取得主要指數行情（自動切換資料來源）。"""
+        data, _source = self.get_main_indices_with_source(region=region)
+        return data
 
     def get_market_stats(self, *, purpose: str = "unspecified") -> Dict[str, Any]:
         """获取市场涨跌统计（自动切换数据源）"""
@@ -2895,7 +3202,7 @@ class DataFetcherManager:
 
         result_ctx: Dict[str, Any] = {
             "market": market,
-            "provider": "yfinance",
+            "provider": "MOPS Open Data + yfinance" if market == "tw" else "yfinance",
             "as_of": datetime.now(timezone.utc).isoformat(),
             "data_quality": "unavailable",
             "missing_fields": [],
@@ -2974,6 +3281,124 @@ class DataFetcherManager:
         growth_payload = bundle_payload.get("growth", {}) if isinstance(bundle_payload.get("growth"), dict) else {}
         earnings_payload = bundle_payload.get("earnings", {}) if isinstance(bundle_payload.get("earnings"), dict) else {}
         belong_boards = bundle_payload.get("belong_boards") if isinstance(bundle_payload.get("belong_boards"), list) else []
+
+        # Taiwan public-data rescue: yfinance does not reliably expose the
+        # monthly-revenue and statutory quarterly fields that JEAC needs.
+        # Query official MOPS Open Data as an additive fallback instead of
+        # leaving the report blank when the configured providers are down.
+        if market == "tw":
+            remaining_for_mops = max(stage_timeout - (time.time() - start_ts), 0.0)
+            if remaining_for_mops > 0 and fetch_timeout > 0:
+                try:
+                    from .mops_open_data_fetcher import MopsOpenDataFetcher
+
+                    mops_payload, mops_err, mops_ms = self._run_with_retry(
+                        lambda: MopsOpenDataFetcher().get_fundamental_bundle(stock_code),
+                        min(fetch_timeout, remaining_for_mops),
+                        "fundamental_bundle_mops_open_data",
+                    )
+                except Exception as exc:  # fail-open: report the attempted route below
+                    mops_payload, mops_err, mops_ms = {}, str(exc), 0
+            else:
+                mops_payload, mops_err, mops_ms = {}, "fundamental stage timeout", 0
+
+            if not isinstance(mops_payload, dict):
+                mops_payload = {}
+            mops_growth = mops_payload.get("growth") if isinstance(mops_payload.get("growth"), dict) else {}
+            mops_earnings = mops_payload.get("earnings") if isinstance(mops_payload.get("earnings"), dict) else {}
+            mops_boards = mops_payload.get("belong_boards") if isinstance(mops_payload.get("belong_boards"), list) else []
+
+            # Retain all fields from both sources but let official MOPS replace
+            # overlapping non-null statutory values.  This avoids turning an
+            # unavailable Yahoo value into a fabricated zero.
+            if mops_growth:
+                combined_growth = dict(growth_payload)
+                for key, value in mops_growth.items():
+                    if value is not None:
+                        combined_growth[key] = value
+                growth_payload = combined_growth
+            if mops_earnings:
+                combined_earnings = dict(earnings_payload)
+                for key, value in mops_earnings.items():
+                    if value is not None:
+                        combined_earnings[key] = value
+                earnings_payload = combined_earnings
+            if mops_boards:
+                existing_board_names = {
+                    str(item.get("name") or "").strip()
+                    for item in belong_boards
+                    if isinstance(item, dict)
+                }
+                belong_boards = list(belong_boards) + [
+                    item
+                    for item in mops_boards
+                    if isinstance(item, dict)
+                    and str(item.get("name") or "").strip()
+                    and str(item.get("name") or "").strip() not in existing_board_names
+                ]
+
+            mops_chain = self._normalize_source_chain(
+                mops_payload.get("source_chain", []),
+                "MopsOpenDataFetcher",
+                str(mops_payload.get("status", "not_supported")),
+                mops_ms,
+            )
+            # MOPS is the official Taiwan source, so show it before the
+            # yfinance fallback in the auditable source chain.
+            bundle_chain = mops_chain + bundle_chain
+            adapter_errors.extend(list(mops_payload.get("errors", [])))
+            if mops_err:
+                adapter_errors.append(f"MOPS Open Data: {mops_err}")
+
+        # US public-data rescue: when the configured/yfinance fundamental
+        # route supplied no meaningful growth or earnings values, consult the
+        # official SEC company-facts API before declaring the fields missing.
+        if market == "us" and (
+            not self._has_meaningful_payload(growth_payload)
+            or not self._has_meaningful_payload(earnings_payload)
+        ):
+            remaining_for_sec = max(stage_timeout - (time.time() - start_ts), 0.0)
+            if remaining_for_sec > 0 and fetch_timeout > 0:
+                try:
+                    from .sec_edgar_fundamental_adapter import SecEdgarFundamentalAdapter
+
+                    sec_payload, sec_err, sec_ms = self._run_with_retry(
+                        lambda: SecEdgarFundamentalAdapter().get_fundamental_bundle(stock_code),
+                        min(fetch_timeout, remaining_for_sec),
+                        "fundamental_bundle_sec_edgar",
+                    )
+                except Exception as exc:  # fail-open; audit the failed attempt
+                    sec_payload, sec_err, sec_ms = {}, str(exc), 0
+            else:
+                sec_payload, sec_err, sec_ms = {}, "fundamental stage timeout", 0
+
+            if not isinstance(sec_payload, dict):
+                sec_payload = {}
+            sec_growth = sec_payload.get("growth") if isinstance(sec_payload.get("growth"), dict) else {}
+            sec_earnings = sec_payload.get("earnings") if isinstance(sec_payload.get("earnings"), dict) else {}
+            if sec_growth:
+                combined_growth = dict(growth_payload)
+                for key, value in sec_growth.items():
+                    if combined_growth.get(key) is None and value is not None:
+                        combined_growth[key] = value
+                growth_payload = combined_growth
+            if sec_earnings:
+                combined_earnings = dict(earnings_payload)
+                for key, value in sec_earnings.items():
+                    if combined_earnings.get(key) is None and value is not None:
+                        combined_earnings[key] = value
+                earnings_payload = combined_earnings
+            bundle_chain.extend(
+                self._normalize_source_chain(
+                    sec_payload.get("source_chain", []),
+                    "SecEdgarFundamentalAdapter",
+                    str(sec_payload.get("status", "not_supported")),
+                    sec_ms,
+                )
+            )
+            adapter_errors.extend(list(sec_payload.get("errors", [])))
+            if sec_err:
+                adapter_errors.append(f"SEC EDGAR: {sec_err}")
 
         growth_status = self._infer_block_status(growth_payload, str(bundle_payload.get("status", "not_supported")))
         earnings_status = self._infer_block_status(earnings_payload, str(bundle_payload.get("status", "not_supported")))

@@ -30,6 +30,57 @@ _REPORT_LANGUAGE_ALIASES = {
     "ko_kr": "ko",
 }
 
+# ``normalize_report_language`` deliberately keeps ``zh-TW`` compatible with
+# the historical ``zh`` presentation dictionaries.  The weekly Taiwan/US
+# workflow, however, must preserve a separate locale signal so that rendered
+# Markdown, DOCX and PPTX never leak Simplified Chinese.  Keep this helper
+# independent of the normalized language code to avoid a breaking change to
+# existing API payloads that use ``zh``.
+_TRADITIONAL_CHINESE_ALIASES = frozenset(
+    {
+        "zh-tw",
+        "zh_tw",
+        "zh-hant",
+        "zh_hant",
+        "traditional",
+        "traditional_chinese",
+        "tw",
+    }
+)
+
+
+def is_traditional_chinese_requested(value: Optional[str] = None) -> bool:
+    """Return whether the raw locale explicitly requests Traditional Chinese.
+
+    ``REPORT_LANGUAGE`` historically normalizes ``zh-TW`` to ``zh`` for
+    backwards compatibility.  Callers that render user-facing content should
+    use this helper before that normalization loses the locale distinction.
+    """
+
+    candidate = str(value or "").strip().lower().replace(" ", "_")
+    return candidate in _TRADITIONAL_CHINESE_ALIASES
+
+
+def ensure_traditional_chinese(text: str, language: Optional[str] = None) -> str:
+    """Convert report content to Taiwan Traditional Chinese when requested.
+
+    The converter is intentionally applied only at the final presentation
+    boundary.  Structured keys and source payloads stay stable internally,
+    while every human-readable document can consistently use Taiwan wording.
+    ``opencc-python-reimplemented`` is a pure-Python dependency installed by
+    the scheduled workflow.
+    """
+
+    if not text or not is_traditional_chinese_requested(language):
+        return text
+    try:
+        from opencc import OpenCC
+    except ImportError as exc:  # pragma: no cover - deployment safeguard
+        raise RuntimeError(
+            "REPORT_LANGUAGE=zh-TW requires opencc-python-reimplemented"
+        ) from exc
+    return OpenCC("s2twp").convert(text)
+
 _OPERATION_ADVICE_CANONICAL_MAP = {
     "强烈买入": "strong_buy",
     "strong buy": "strong_buy",

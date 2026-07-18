@@ -17,6 +17,7 @@ A股自选股智能分析系统 - 通知层
 from __future__ import annotations
 
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -42,6 +43,7 @@ from src.report_language import (
     get_report_labels,
     get_signal_level,
     get_chip_unavailable_reason,
+    ensure_traditional_chinese,
     is_chip_structure_unavailable,
     localize_chip_health,
     localize_trend_prediction,
@@ -342,8 +344,16 @@ class NotificationService(
         """Generate the aggregate report content used by merge/save/push paths."""
         normalized_type = self._normalize_report_type(report_type)
         if normalized_type == ReportType.BRIEF:
-            return self.generate_brief_report(results, report_date=report_date)
-        return self.generate_dashboard_report(results, report_date=report_date)
+            report = self.generate_brief_report(results, report_date=report_date)
+        else:
+            report = self.generate_dashboard_report(results, report_date=report_date)
+        # Keep all user-facing delivery routes (Markdown, notifications,
+        # DOCX/PPTX) aligned when the scheduled Taiwan workflow requests
+        # zh-TW.  Structured model data remains untouched.
+        return ensure_traditional_chinese(
+            report,
+            os.getenv("REPORT_LANGUAGE") or getattr(self._config, "report_language", ""),
+        )
 
     def _collect_models_used(self, results: List[AnalysisResult]) -> List[str]:
         if not self._should_show_llm_model():

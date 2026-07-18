@@ -100,6 +100,8 @@ class RealtimeSource(Enum):
     TUSHARE = "tushare"             # Tushare Pro
     TICKFLOW = "tickflow"           # TickFlow
     FUGLE = "fugle"                 # Fugle 台灣行情
+    TWSE_TPEX = "twse_tpex"         # 台灣交易所公開收盤資料
+    NASDAQ = "nasdaq"               # Nasdaq 公開延遲行情
     TENCENT = "tencent"             # 腾讯直连
     SINA = "sina"                   # 新浪直连
     STOOQ = "stooq"                 # Stooq 美股兜底

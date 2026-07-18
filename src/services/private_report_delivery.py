@@ -18,6 +18,8 @@ import os
 import re
 import tempfile
 
+from src.report_language import ensure_traditional_chinese
+
 logger = logging.getLogger(__name__)
 
 # The service account itself is shared only with the designated report folder.
@@ -110,11 +112,17 @@ class PrivateReportDelivery:
             raise PrivateReportDeliveryError(f"Unsupported private report kind: {report_kind}")
         if not markdown or not markdown.strip():
             raise PrivateReportDeliveryError("Refusing to export an empty report")
+        markdown = ensure_traditional_chinese(markdown, os.getenv("REPORT_LANGUAGE", ""))
         self._validate_configuration()
 
         moment = report_date.astimezone(_TAIPEI) if report_date else datetime.now(_TAIPEI)
         date_label = moment.strftime("%Y-%m") if kind == "monthly" else moment.strftime("%Y-%m-%d")
-        title = f"JEAC {kind.title()} Investment Report"
+        traditional_titles = {
+            "daily": "JEAC 每日投資報告",
+            "weekly": "JEAC 每週投資策略報告",
+            "monthly": "JEAC 每月投資檢討報告",
+        }
+        title = traditional_titles[kind] if os.getenv("REPORT_LANGUAGE", "").lower() in {"zh-tw", "zh_tw", "zh-hant"} else f"JEAC {kind.title()} Investment Report"
         base_name = f"JEAC_{kind.title()}_{date_label}"
 
         with tempfile.TemporaryDirectory(prefix="jeac-private-report-") as temporary:
