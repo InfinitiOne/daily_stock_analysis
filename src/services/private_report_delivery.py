@@ -156,6 +156,7 @@ class PrivateReportDelivery:
         try:
             from docx import Document
             from docx.enum.text import WD_ALIGN_PARAGRAPH
+            from docx.oxml.ns import qn
             from docx.shared import Inches, Pt, RGBColor
         except ImportError as exc:  # pragma: no cover - exercised in deployment checks
             raise PrivateReportDeliveryError("python-docx is not installed") from exc
@@ -167,10 +168,17 @@ class PrivateReportDelivery:
         section.left_margin = Inches(0.8)
         section.right_margin = Inches(0.8)
 
+        def set_cjk_font(target) -> None:
+            """Set the Word east-Asian font explicitly, not only Latin font."""
+            target.font.name = "Microsoft JhengHei"
+            target._element.get_or_add_rPr().rFonts.set(qn("w:eastAsia"), "Microsoft JhengHei")
+
         normal = document.styles["Normal"]
-        normal.font.name = "Microsoft JhengHei"
+        set_cjk_font(normal)
         normal.font.size = Pt(10.5)
         normal.paragraph_format.space_after = Pt(6)
+        for style_name in ("List Bullet", "List Number"):
+            set_cjk_font(document.styles[style_name])
 
         heading_colours = {
             1: RGBColor(31, 78, 121),
@@ -179,15 +187,19 @@ class PrivateReportDelivery:
         }
         for level, colour in heading_colours.items():
             style = document.styles[f"Heading {level}"]
-            style.font.name = "Microsoft JhengHei"
+            set_cjk_font(style)
             style.font.color.rgb = colour
 
         heading = document.add_heading(title, level=0)
+        for run in heading.runs:
+            set_cjk_font(run)
         heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
         subtitle = document.add_paragraph(
             f"資料完整性通過後產生｜{generated_at.strftime('%Y-%m-%d %H:%M')}（Asia/Taipei）"
         )
         subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        for run in subtitle.runs:
+            set_cjk_font(run)
         subtitle.runs[0].font.size = Pt(9)
         document.add_paragraph("")
 
