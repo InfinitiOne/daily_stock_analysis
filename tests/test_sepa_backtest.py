@@ -1,0 +1,44 @@
+from src.core.sepa_backtest import SepaBacktest, SepaBacktestConfig
+
+
+def _bars(count=280):
+    bars = []
+    for index in range(count):
+        close = 100 + index * 0.15
+        bars.append({"date": f"2025-01-{index + 1:03d}", "open": close, "high": close + 1, "low": close - 1, "close": close, "volume": 100})
+    return bars
+
+
+def test_blocks_incomplete_ohlcv():
+    result = SepaBacktest.run([{"date": "2025-01-01", "open": 1}])
+    assert result["validation_status"] == "blocked"
+    assert "缺少" in result["reason"]
+
+
+def test_enters_only_on_next_session_and_includes_costs():
+    bars = _bars()
+    # Make the last 120 bars contract in range and volume, then create a valid pivot breakout.
+    for index in range(160, 220):
+        bars[index].update(high=bars[index]["close"] + 5, low=bars[index]["close"] - 5, volume=200)
+    for index in range(220, 279):
+        bars[index].update(high=bars[index]["close"] + 1, low=bars[index]["close"] - 1, volume=80)
+    bars[279].update(close=143.5, high=143.6, low=142.4, volume=200)
+    bars.append({"date": "2025-01-281", "open": 142.5, "high": 166, "low": 142, "close": 165, "volume": 100})
+    result = SepaBacktest.run(bars, SepaBacktestConfig(max_holding_bars=1))
+    assert result["validation_status"] == "completed"
+    assert result["trades"]
+    trade = result["trades"][-1]
+    assert trade["entry_date"] > trade["signal_date"]
+    assert trade["entry_price"] > 142.5
+
+
+def test_same_day_stop_and_target_uses_conservative_stop():
+    bars = _bars()
+    for index in range(160, 220):
+        bars[index].update(high=bars[index]["close"] + 5, low=bars[index]["close"] - 5, volume=200)
+    for index in range(220, 279):
+        bars[index].update(high=bars[index]["close"] + 1, low=bars[index]["close"] - 1, volume=80)
+    bars[279].update(close=143.5, high=143.6, low=142.4, volume=200)
+    bars.append({"date": "2025-01-281", "open": 142.5, "high": 180, "low": 120, "close": 150, "volume": 100})
+    result = SepaBacktest.run(bars)
+    assert result["trades"][-1]["exit_reason"] == "stop_loss"
