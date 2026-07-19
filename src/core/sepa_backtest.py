@@ -61,7 +61,7 @@ class SepaBacktest:
 
         return {
             "validation_status": "completed",
-            "rule_version": "sepa-pivot-v1",
+            "rule_version": "minervini-sepa-v2",
             "assumptions": {
                 "entry": "signal close confirmed; next session open entry",
                 "same_bar_stop_target": "stop_loss_first",
@@ -106,28 +106,55 @@ class SepaBacktest:
         ma200 = cls._mean([bar["close"] for bar in history[-200:]])
         prior_ma200 = cls._mean([bar["close"] for bar in history[-220:-20]])
         high_52w = max(bar["high"] for bar in history)
-        stage_2 = close > ma50 > ma150 > ma200 and ma200 > prior_ma200
-        sepa = stage_2 and close >= high_52w * 0.75
-        recent = history[-cfg.contraction_bars:]
-        earlier = history[-2 * cfg.contraction_bars : -cfg.contraction_bars]
-        if len(earlier) != cfg.contraction_bars:
-            return None
-        recent_range = (max(bar["high"] for bar in recent) - min(bar["low"] for bar in recent)) / cls._mean(
-            [bar["close"] for bar in recent]
+        low_52w = min(bar["low"] for bar in history)
+        trend_template = (
+            close > ma50 and close > ma150 and close > ma200,
+            ma50 > ma150 > ma200,
+            ma200 > prior_ma200,
+            close >= low_52w * 1.25,
+            close >= high_52w * 0.75,
+            close > ma50,
         )
-        earlier_range = (max(bar["high"] for bar in earlier) - min(bar["low"] for bar in earlier)) / cls._mean(
-            [bar["close"] for bar in earlier]
+        trend_template_pass_count = sum(trend_template)
+        stage_2 = trend_template_pass_count == len(trend_template)
+
+        # Deterministic four-contraction VCP screen.  The signal stores the
+        # count so the validation report can segment results without using
+        # hindsight visual pattern labels.
+        vcp_window = history[-48:]
+        contractions = []
+        for start in range(0, 48, 12):
+            segment = vcp_window[start : start + 12]
+            high = max(bar["high"] for bar in segment)
+            low = min(bar["low"] for bar in segment)
+            contractions.append(
+                {
+                    "range_pct": (high - low) / max(high, 1e-9) * 100,
+                    "average_volume": cls._mean([bar["volume"] for bar in segment]),
+                    "low": low,
+                }
+            )
+        contraction_count = sum(
+            contractions[position]["range_pct"] < contractions[position - 1]["range_pct"]
+            for position in range(1, len(contractions))
         )
-        vcp = recent_range < earlier_range and cls._mean([bar["volume"] for bar in recent]) <= cls._mean(
-            [bar["volume"] for bar in earlier]
-        )
-        base = bars[index - cfg.base_bars : index]
+        volume_dry_up = contractions[-1]["average_volume"] <= contractions[-2]["average_volume"] * 0.8
+        vcp = contraction_count >= 2 and contractions[-1]["range_pct"] <= 15 and volume_dry_up
+
+        base = history[-49:-10]
         pivot = max(bar["high"] for bar in base)
-        volume_ratio = bars[index]["volume"] / max(cls._mean([bar["volume"] for bar in base]), 1e-9)
+        volume_ratio = bars[index]["volume"] / max(cls._mean([bar["volume"] for bar in history[-51:-1]]), 1e-9)
         pivot_confirmed = pivot <= close <= pivot * (1 + cfg.max_pivot_extension_pct / 100) and volume_ratio >= cfg.pivot_volume_multiple
-        if not (sepa and vcp and pivot_confirmed):
+        if not (stage_2 and vcp and pivot_confirmed):
             return None
-        return {"pivot": pivot, "volume_ratio": volume_ratio, "signal_date": bars[index]["date"]}
+        return {
+            "pivot": pivot,
+            "volume_ratio": volume_ratio,
+            "signal_date": bars[index]["date"],
+            "trend_template_pass_count": trend_template_pass_count,
+            "vcp_contraction_count": contraction_count,
+            "vcp_final_low": contractions[-1]["low"],
+        }
 
     @classmethod
     def _simulate_trade(cls, bars, signal_index, signal, cfg):
@@ -154,6 +181,9 @@ class SepaBacktest:
             "entry_index": entry_index, "exit_index": exit_index, "entry_price": round(entry_price, 6),
             "exit_price": round(exit_price, 6), "pivot": round(signal["pivot"], 6),
             "pivot_volume_ratio": round(signal["volume_ratio"], 3), "exit_reason": exit_reason,
+            "trend_template_pass_count": int(signal["trend_template_pass_count"]),
+            "vcp_contraction_count": int(signal["vcp_contraction_count"]),
+            "vcp_final_low": round(float(signal["vcp_final_low"]), 6),
             "return_pct": round(return_pct, 4), "holding_bars": exit_index - entry_index + 1,
         }
 
