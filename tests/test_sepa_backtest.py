@@ -9,6 +9,14 @@ def _bars(count=280):
     return bars
 
 
+def _make_vcp(bars):
+    """Create the same auditable four-contraction VCP used by rule v2."""
+    for width, volume, start in ((8, 500, 232), (5, 320, 244), (3, 180, 256), (1, 80, 268)):
+        for index in range(start, start + 12):
+            close = bars[index]["close"]
+            bars[index].update(high=close + width, low=close - width, volume=volume)
+
+
 def test_blocks_incomplete_ohlcv():
     result = SepaBacktest.run([{"date": "2025-01-01", "open": 1}])
     assert result["validation_status"] == "blocked"
@@ -17,12 +25,8 @@ def test_blocks_incomplete_ohlcv():
 
 def test_enters_only_on_next_session_and_includes_costs():
     bars = _bars()
-    # Make the last 120 bars contract in range and volume, then create a valid pivot breakout.
-    for index in range(160, 220):
-        bars[index].update(high=bars[index]["close"] + 5, low=bars[index]["close"] - 5, volume=200)
-    for index in range(220, 279):
-        bars[index].update(high=bars[index]["close"] + 1, low=bars[index]["close"] - 1, volume=80)
-    bars[279].update(close=143.5, high=143.6, low=142.4, volume=200)
+    _make_vcp(bars)
+    bars[279].update(close=144.6, high=144.7, low=143.5, volume=800)
     bars.append({"date": "2025-01-281", "open": 142.5, "high": 166, "low": 142, "close": 165, "volume": 100})
     result = SepaBacktest.run(bars, SepaBacktestConfig(max_holding_bars=1))
     assert result["validation_status"] == "completed"
@@ -34,11 +38,8 @@ def test_enters_only_on_next_session_and_includes_costs():
 
 def test_same_day_stop_and_target_uses_conservative_stop():
     bars = _bars()
-    for index in range(160, 220):
-        bars[index].update(high=bars[index]["close"] + 5, low=bars[index]["close"] - 5, volume=200)
-    for index in range(220, 279):
-        bars[index].update(high=bars[index]["close"] + 1, low=bars[index]["close"] - 1, volume=80)
-    bars[279].update(close=143.5, high=143.6, low=142.4, volume=200)
+    _make_vcp(bars)
+    bars[279].update(close=144.6, high=144.7, low=143.5, volume=800)
     bars.append({"date": "2025-01-281", "open": 142.5, "high": 180, "low": 120, "close": 150, "volume": 100})
     result = SepaBacktest.run(bars)
     assert result["trades"][-1]["exit_reason"] == "stop_loss"
