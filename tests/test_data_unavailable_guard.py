@@ -58,7 +58,10 @@ def test_new_listing_history_is_limited_not_unavailable() -> None:
     evidence = StockTrendAnalyzer._build_weekly_technical_evidence(frame)
 
     assert evidence["data_status"] == "limited_history"
-    assert evidence["sepa"] == "未取得／暫停判定"
+    # A newly listed instrument has usable short-term data, but insufficient
+    # history for Minervini's long-cycle SEPA judgement.  This is distinct
+    # from a data-fetch failure and must remain visible to the report layer.
+    assert evidence["sepa"] == "不適用（歷史不足）"
     assert evidence["short_term_analysis_available"] is True
     assert evidence["short_term_lookback_bars"] == 20
     assert evidence["ma5"] == 10.0
