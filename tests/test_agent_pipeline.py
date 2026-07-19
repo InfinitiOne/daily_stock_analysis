@@ -1494,6 +1494,39 @@ class TestPipelineSkillRegistration(unittest.TestCase):
 # Pipeline dual-path routing
 # ============================================================
 
+
+def _prepare_evaluable_tw_route(pipeline, code: str = "2330.TW") -> None:
+    """Give routing tests verified Taiwan daily bars without using a provider.
+
+    These are routing tests, not data-source tests.  The pipeline now correctly
+    refuses to invoke either LLM path before daily OHLCV has passed the core
+    data gate, so the fixture must provide a minimal verified trend result.
+    """
+    from src.stock_analyzer import TrendAnalysisResult
+
+    pipeline.fetcher_manager.get_stock_name.return_value = "台積電"
+    pipeline.fetcher_manager.get_fundamental_context.return_value = {
+        "market": "tw", "coverage": {}, "source_chain": [],
+    }
+    pipeline.fetcher_manager.build_failed_fundamental_context.return_value = {
+        "market": "tw", "coverage": {}, "source_chain": [],
+    }
+    pipeline.db.get_data_range.return_value = [
+        SimpleNamespace(
+            to_dict=lambda: {
+                "date": "2026-07-17", "open": 1000.0, "high": 1010.0,
+                "low": 995.0, "close": 1005.0, "volume": 1000,
+                "data_source": "FinMind",
+            }
+        )
+    ]
+    pipeline.trend_analyzer.analyze.return_value = TrendAnalysisResult(
+        code=code,
+        is_evaluable=True,
+        signal_score=60,
+        technical_evidence={"data_status": "available"},
+    )
+
 class TestPipelineRouting(unittest.TestCase):
     """Test that analyze_stock routes to agent mode when config.agent_mode is True."""
 
@@ -1527,6 +1560,7 @@ class TestPipelineRouting(unittest.TestCase):
             from src.core.pipeline import StockAnalysisPipeline
             from src.enums import ReportType
             pipeline = StockAnalysisPipeline(config=mock_cfg)
+            _prepare_evaluable_tw_route(pipeline)
 
             # Mock _analyze_with_agent to verify it gets called
             pipeline._analyze_with_agent = MagicMock(return_value=None)
@@ -1573,6 +1607,11 @@ class TestPipelineRouting(unittest.TestCase):
             from src.core.pipeline import StockAnalysisPipeline
             from src.enums import ReportType
             pipeline = StockAnalysisPipeline(config=mock_cfg)
+            _prepare_evaluable_tw_route(pipeline)
+            pipeline.db.get_analysis_context.return_value = {
+                "code": "2330.TW", "stock_name": "台積電", "date": "2026-07-17",
+                "today": {"close": 1005.0}, "yesterday": {"close": 1000.0},
+            }
 
             # Mock the fetcher_manager to return None for realtime
             pipeline.fetcher_manager.get_realtime_quote.return_value = None
@@ -1623,6 +1662,7 @@ class TestPipelineRouting(unittest.TestCase):
                 config=mock_cfg,
                 analysis_skills=["growth_quality"],
             )
+            _prepare_evaluable_tw_route(pipeline)
             pipeline._analyze_with_agent = MagicMock(return_value=None)
 
             pipeline.analyze_stock("2330.TW", ReportType.SIMPLE, "q1")

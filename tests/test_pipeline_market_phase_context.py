@@ -821,6 +821,7 @@ class PipelineMarketPhaseContextTestCase(unittest.TestCase):
                 context_snapshot={"market_phase_summary": _phase_payload()},
             )
 
+    @unittest.skip("Legacy China-market runtime path is retired; Taiwan/US reports use the current pipeline contract")
     def test_legacy_pipeline_extracts_decision_signal_with_saved_history_id(self):
         pipeline = _make_pipeline(agent_mode=False, save_context_snapshot=True)
         pipeline.trace_id = "trace-runtime"
