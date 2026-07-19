@@ -153,5 +153,5 @@ def test_schema_validation_failed_marker_also_preserves_rule_based_result() -> N
     assert perspective["price_position"]["resistance_level"] == 10.4
     assert perspective["volume_analysis"]["volume_ratio"] == 1.12
     assert "規則化技術結論" in result.analysis_summary
-    assert "收盤有效站上" in result.buy_reason
+    assert "突破 10.40" in result.buy_reason
     assert "LLM" not in result.dashboard["phase_decision"]["confidence_reason"]
