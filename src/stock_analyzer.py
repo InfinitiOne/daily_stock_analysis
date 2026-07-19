@@ -297,7 +297,14 @@ class StockTrendAnalyzer:
 
     @staticmethod
     def _build_weekly_technical_evidence(df: pd.DataFrame) -> Dict[str, Any]:
-        """Build auditable SEPA evidence; never infer a long-term setup from short data."""
+        """Build deterministic Minervini-style trend, Stage, VCP and pivot evidence.
+
+        This is deliberately a *screening* implementation: it exposes every
+        number that formed the result so that a report never has to invent a
+        Stage, a VCP price, or a pivot.  Relative strength and fundamentals
+        are separate inputs and therefore cannot silently turn a technically
+        valid setup into a fabricated failure.
+        """
         history_bars = len(df)
         required_bars = 252
         if history_bars < required_bars:
@@ -341,13 +348,15 @@ class StockTrendAnalyzer:
                 "data_status": "limited_history",
                 "history_bars": history_bars,
                 "required_history_bars": required_bars,
-                # These four fields remain machine-readable compatibility
-                # values.  ``setup_summary`` below is the user-facing form:
-                # short history is a scope limitation, not a failed analysis.
-                "stage_2": "未取得／暫停判定",
-                "sepa": "未取得／暫停判定",
-                "vcp": "未取得／暫停判定",
-                "pivot": "未取得／暫停判定",
+                # Long-cycle labels are deliberately *not applicable* here;
+                # a valid new ETF is not a failed Stage/VCP setup.  Report
+                # renderers use ``data_status`` to omit these four fields.
+                "stage": None,
+                "stage_label": "長週期 Stage 不適用（歷史不足）",
+                "stage_2": "不適用（歷史不足）",
+                "sepa": "不適用（歷史不足）",
+                "vcp": "不適用（歷史不足）",
+                "pivot": "不適用（歷史不足）",
                 # The listing is still analysable with the indicators that
                 # have enough observations.  These facts let the report
                 # discuss MA5/10/20, volume, MACD and RSI without pretending
@@ -381,23 +390,76 @@ class StockTrendAnalyzer:
         ma50 = float(latest["MA50"])
         ma150 = float(latest["MA150"])
         ma200 = float(latest["MA200"])
+        ma200_20d_ago = float(df["MA200"].iloc[-21])
         high_52w = float(df["high"].tail(required_bars).max())
         low_52w = float(df["low"].tail(required_bars).min())
-        stage_2 = close > ma50 > ma150 > ma200 and ma200 > 0
+        template_checks = {
+            "price_above_ma50_150_200": close > ma50 and close > ma150 and close > ma200,
+            "ma50_above_ma150_above_ma200": ma50 > ma150 > ma200,
+            "ma200_rising_20_sessions": ma200 > ma200_20d_ago,
+            "price_25pct_above_52w_low": close >= low_52w * 1.25,
+            "within_25pct_of_52w_high": close >= high_52w * 0.75,
+            "price_above_ma50": close > ma50,
+        }
+        template_pass_count = sum(bool(value) for value in template_checks.values())
+        stage_2 = template_pass_count == len(template_checks)
+        ma200_slope_pct = (ma200 / max(ma200_20d_ago, 1e-9) - 1) * 100
+        if stage_2:
+            stage, stage_label = 2, "Stage 2 上升期"
+        elif close < ma200 and ma200_slope_pct < 0:
+            stage, stage_label = 4, "Stage 4 下降期"
+        elif close < ma50 or ma50 < ma150:
+            stage, stage_label = 3, "Stage 3 頂部／轉弱期"
+        else:
+            stage, stage_label = 1, "Stage 1 築底期"
 
-        recent = df.tail(60).copy()
-        earlier = df.iloc[-120:-60].copy()
-        recent_range = (float(recent["high"].max()) - float(recent["low"].min())) / max(float(recent["close"].mean()), 1e-9)
-        earlier_range = (float(earlier["high"].max()) - float(earlier["low"].min())) / max(float(earlier["close"].mean()), 1e-9)
-        recent_volume = float(recent["volume"].mean())
-        earlier_volume = float(earlier["volume"].mean())
-        vcp = recent_range < earlier_range and recent_volume <= earlier_volume
+        # VCP is screened as four chronological 12-session contractions.  It
+        # is intentionally labelled as a rule-based candidate rather than a
+        # visual certainty.  Each contraction reports its range and volume so
+        # the analyst can audit or reject it.
+        vcp_window = df.tail(48).reset_index(drop=True)
+        contractions = []
+        for number, start in enumerate(range(0, 48, 12), start=1):
+            segment = vcp_window.iloc[start : start + 12]
+            segment_high = float(segment["high"].max())
+            segment_low = float(segment["low"].min())
+            contractions.append(
+                {
+                    "sequence": number,
+                    "range_pct": round((segment_high - segment_low) / max(segment_high, 1e-9) * 100, 2),
+                    "average_volume": round(float(segment["volume"].mean()), 2),
+                    "high": round(segment_high, 4),
+                    "low": round(segment_low, 4),
+                }
+            )
+        ranges = [item["range_pct"] for item in contractions]
+        volumes = [item["average_volume"] for item in contractions]
+        contraction_count = sum(ranges[index] < ranges[index - 1] for index in range(1, len(ranges)))
+        volume_dry_up = volumes[-1] <= volumes[-2] * 0.8
+        vcp = contraction_count >= 2 and ranges[-1] <= 15 and volume_dry_up
 
-        base = df.iloc[-51:-1]
+        # The pivot is the highest high before the latest 10-session final
+        # contraction.  A valid report gets the pivot and buy-zone regardless
+        # of whether today's bar has already broken out.
+        base = df.iloc[-49:-10]
         pivot_price = float(base["high"].max())
-        avg_volume_50 = float(base["volume"].mean())
+        final_contraction_low = float(vcp_window.iloc[-12:]["low"].min())
+        avg_volume_50 = float(df.iloc[-51:-1]["volume"].mean())
         volume_ratio = float(latest["volume"]) / max(avg_volume_50, 1e-9)
-        pivot_confirmed = close >= pivot_price and close <= pivot_price * 1.05 and volume_ratio >= 1.4
+        buy_zone_high = pivot_price * 1.05
+        pivot_confirmed = pivot_price <= close <= buy_zone_high and volume_ratio >= 1.4
+        extended = close > buy_zone_high
+        structural_stop = final_contraction_low
+        risk_pct = (pivot_price - structural_stop) / max(pivot_price, 1e-9) * 100
+        pivot_quality = "High" if stage_2 and vcp and risk_pct <= 8 else "Mid" if stage_2 and risk_pct <= 10 else "Low"
+        breakout_risk = "High" if extended or risk_pct > 10 else "Mid" if not vcp or volume_ratio < 1.4 else "Low"
+        technical_score = (
+            template_pass_count * 10
+            + min(contraction_count, 3) * 8
+            + (6 if volume_dry_up else 0)
+            + (6 if 0 < risk_pct <= 8 else 0)
+        )
+        rating = "A+" if technical_score >= 90 else "A" if technical_score >= 80 else "A-" if technical_score >= 70 else "B+" if technical_score >= 60 else "B" if technical_score >= 50 else "C"
 
         return {
             "data_status": "available",
@@ -406,21 +468,45 @@ class StockTrendAnalyzer:
             "ma50": round(ma50, 4),
             "ma150": round(ma150, 4),
             "ma200": round(ma200, 4),
+            "ma200_20d_ago": round(ma200_20d_ago, 4),
+            "ma200_slope_20d_pct": round(ma200_slope_pct, 3),
             "high_52w": round(high_52w, 4),
             "low_52w": round(low_52w, 4),
+            "trend_template": {
+                "passed": stage_2,
+                "pass_count": template_pass_count,
+                "total_checks": len(template_checks),
+                "checks": template_checks,
+            },
+            "stage": stage,
+            "stage_label": stage_label,
             "stage_2": "符合" if stage_2 else "未符合",
-            "sepa": "符合" if stage_2 and close >= high_52w * 0.75 else "未符合",
-            "vcp": "初步符合" if vcp else "未確認",
-            "pivot": "突破確認" if pivot_confirmed else "未觸發",
+            "sepa": "符合" if stage_2 and vcp and not extended else "等待確認" if stage_2 else "未符合",
+            "sepa_rating": rating,
+            "technical_score": technical_score,
+            "relative_strength_status": "未提供（不計入技術分數）",
+            "vcp": "VCP 候選" if vcp else "未形成",
+            "vcp_contraction_count": contraction_count,
+            "vcp_contractions": contractions,
+            "vcp_last_contraction_low": round(final_contraction_low, 4),
+            "vcp_volume_dry_up": volume_dry_up,
+            "pivot": "突破確認" if pivot_confirmed else "價格已延伸" if extended else "等待突破",
             "pivot_price": round(pivot_price, 4),
+            "pivot_buy_zone_low": round(pivot_price, 4),
+            "pivot_buy_zone_high": round(buy_zone_high, 4),
+            "pivot_structural_stop": round(structural_stop, 4),
+            "pivot_risk_pct": round(risk_pct, 3),
+            "pivot_quality": pivot_quality,
+            "breakout_risk": breakout_risk,
             "pivot_volume_ratio": round(volume_ratio, 3),
             "setup_summary": (
-                f"長週期技術：Stage 2{'成立' if stage_2 else '尚未成立'}；"
-                f"SEPA{'成立' if stage_2 and close >= high_52w * 0.75 else '尚未成立'}；"
-                f"VCP{'初步收斂' if vcp else '尚未形成'}；"
-                f"Pivot{'帶量突破確認' if pivot_confirmed else '尚未觸發'}。"
+                f"{stage_label}；Trend Template {template_pass_count}/{len(template_checks)}；"
+                f"VCP {'候選' if vcp else '未形成'}（{contraction_count} 次連續收縮，末段 {ranges[-1]:.2f}%）；"
+                f"Pivot {pivot_price:.4f}，可買區 {pivot_price:.4f}–{buy_zone_high:.4f}，"
+                f"結構停損 {structural_stop:.4f}（風險 {risk_pct:.2f}%）；"
+                f"SEPA {rating}，{'帶量突破確認' if pivot_confirmed else '價格已延伸' if extended else '等待帶量突破'}。"
             ),
-            "reason": "以 252 根以上日線計算；VCP 為規則化初篩，非主觀臆測。",
+            "reason": "以 252 根以上日線計算；VCP 為四段時間序列收縮初篩，需由量價與基本面／RS 資料完成覆核。",
         }
 
     def _calculate_macd(self, df: pd.DataFrame) -> pd.DataFrame:
