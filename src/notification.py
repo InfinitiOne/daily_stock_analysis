@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 32788)
-Total output lines: 3074
-
 # -*- coding: utf-8 -*-
 """
 ===================================
@@ -1468,7 +1465,228 @@ class NotificationService(
                             chip_health = localize_chip_health(chip_data.get('chip_health', 'N/A'), report_language)
                             report_lines.extend([
                                 f"**{labels['chip_label']}**: {chip_data.get('profit_ratio', 'N/A')} | {chip_data.get('avg_cost', 'N/A')} | "
-                                f"{chip_data.get('…2788 tokens truncated…ummary')):
+                                f"{chip_data.get('concentration', 'N/A')} {chip_health}",
+                                "",
+                            ])
+                    else:
+                        chip_unavailable_reason = get_chip_unavailable_reason(data_persp, report_language)
+                        if chip_unavailable_reason:
+                            report_lines.extend([
+                                f"**{labels['chip_label']}**: {chip_unavailable_reason}",
+                                "",
+                            ])
+
+                self._append_phase_decision_block(report_lines, dashboard, labels)
+
+                # ========== 作战计划 ==========
+                battle = dashboard.get('battle_plan', {}) if dashboard else {}
+                if battle:
+                    report_lines.extend([
+                        f"### 🎯 {labels['battle_plan_heading']}",
+                        "",
+                    ])
+                    # 狙击点位
+                    sniper = battle.get('sniper_points', {})
+                    if self._has_actionable_sniper_points(sniper):
+                        report_lines.extend([
+                            f"**📍 {labels['action_points_heading']}**",
+                            "",
+                            f"| {labels['action_points_heading']} | {labels['current_price_label']} |",
+                            "|---------|------|",
+                            f"| 🎯 {labels['ideal_buy_label']} | {self._clean_sniper_value(sniper.get('ideal_buy', 'N/A'))} |",
+                            f"| 🔵 {labels['secondary_buy_label']} | {self._clean_sniper_value(sniper.get('secondary_buy', 'N/A'))} |",
+                            f"| 🛑 {labels['stop_loss_label']} | {self._clean_sniper_value(sniper.get('stop_loss', 'N/A'))} |",
+                            f"| 🎊 {labels['take_profit_label']} | {self._clean_sniper_value(sniper.get('take_profit', 'N/A'))} |",
+                            "",
+                        ])
+                    else:
+                        report_lines.extend([
+                            f"**📍 {labels['action_points_heading']}**：未建立；目前僅提供資料可驗證的支撐／壓力與均線，不以缺失資料推導交易點位。",
+                            "",
+                        ])
+                    # 仓位策略
+                    position = battle.get('position_strategy', {})
+                    if position:
+                        report_lines.extend([
+                            f"**💰 {labels['suggested_position_label']}**: {position.get('suggested_position', 'N/A')}",
+                            f"- {labels['entry_plan_label']}: {position.get('entry_plan', 'N/A')}",
+                            f"- {labels['risk_control_label']}: {position.get('risk_control', 'N/A')}",
+                            "",
+                        ])
+                    # 检查清单
+                    checklist = battle.get('action_checklist', []) if battle else []
+                    if checklist:
+                        report_lines.extend([
+                            f"**✅ {labels['checklist_heading']}**",
+                            "",
+                        ])
+                        for item in checklist:
+                            report_lines.append(f"- {item}")
+                        report_lines.append("")
+
+                # ========== 信号归因分析 ==========
+                signal_attr = dashboard.get('signal_attribution', {}) if dashboard else {}
+                if signal_attribution_has_content(signal_attr):
+                    report_lines.extend([
+                        f"### 🎯 {labels['signal_attribution_heading']}",
+                        "",
+                    ])
+                    weight_items = signal_attribution_weight_items(signal_attr)
+                    if weight_items:
+                        report_lines.append(f"**{labels['attribution_weights_label']}**:")
+                        weight_labels = {
+                            "technical_indicators": ("📈", labels['technical_indicators_label']),
+                            "news_sentiment": ("📰", labels['news_sentiment_label']),
+                            "fundamentals": ("📊", labels['fundamentals_label']),
+                            "market_conditions": ("🌐", labels['market_conditions_label']),
+                        }
+                        for key, value in weight_items:
+                            icon, label = weight_labels[key]
+                            report_lines.append(f"- {icon} {label}: {value}%")
+                        report_lines.append("")
+
+                    # 最强信号
+                    if signal_attr.get('strongest_bullish_signal'):
+                        report_lines.append(f"**🐂 {labels['strongest_bullish_signal_label']}**: {signal_attr['strongest_bullish_signal']}")
+                    if signal_attr.get('strongest_bearish_signal'):
+                        report_lines.append(f"**🐻 {labels['strongest_bearish_signal_label']}**: {signal_attr['strongest_bearish_signal']}")
+                    report_lines.append("")
+
+                # 财务摘要 / 股东回报 / 关联板块（数据缺失时自动隐藏对应小节）
+                self._append_fundamental_blocks(report_lines, result)
+
+                # 如果没有 dashboard，显示传统格式
+                if not dashboard:
+                    # 操作理由
+                    if result.buy_reason:
+                        report_lines.extend([
+                            f"**💡 {reason_label}**: {result.buy_reason}",
+                            "",
+                        ])
+                    # 风险提示
+                    if result.risk_warning:
+                        report_lines.extend([
+                            f"**⚠️ {risk_warning_label}**: {result.risk_warning}",
+                            "",
+                        ])
+                    # 技术面分析
+                    if result.ma_analysis or result.volume_analysis:
+                        report_lines.extend([
+                            f"### 📊 {technical_heading}",
+                            "",
+                        ])
+                        if result.ma_analysis:
+                            report_lines.append(f"**{ma_label}**: {result.ma_analysis}")
+                        if result.volume_analysis:
+                            report_lines.append(f"**{volume_analysis_label}**: {result.volume_analysis}")
+                        report_lines.append("")
+                    # 消息面
+                    if result.news_summary:
+                        report_lines.extend([
+                            f"### 📰 {news_heading}",
+                            f"{result.news_summary}",
+                            "",
+                        ])
+
+                report_lines.extend([
+                    "---",
+                    "",
+                ])
+
+        # 底部（去除免责声明）
+        report_lines.extend([
+            "",
+            f"*{labels['generated_at_label']}：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*",
+        ])
+        models = self._collect_models_used(results)
+        if models:
+            report_lines.append(f"*{labels['analysis_model_label']}：{', '.join(models)}*")
+
+        return "\n".join(report_lines)
+
+    def generate_wechat_dashboard(self, results: List[AnalysisResult]) -> str:
+        """
+        生成企业微信决策仪表盘精简版（控制在4000字符内）
+
+        只保留核心结论和狙击点位
+
+        Args:
+            results: 分析结果列表
+
+        Returns:
+            精简版决策仪表盘
+        """
+        config = get_config()
+        report_language = self._get_report_language(results)
+        labels = get_report_labels(report_language)
+        if getattr(config, 'report_renderer_enabled', False) and results:
+            from src.services.report_renderer import render
+            out = render(
+                platform='wechat',
+                results=results,
+                report_date=datetime.now().strftime('%Y-%m-%d'),
+                summary_only=self._report_summary_only,
+                extra_context={"report_language": report_language},
+            )
+            if out:
+                return out
+
+        report_date = datetime.now().strftime('%Y-%m-%d')
+
+        # 按评分排序
+        sorted_results = self._sort_results_for_report(results)
+
+        buy_count, sell_count, hold_count = self._count_display_decisions(results, report_language)
+
+        lines = [
+            f"## 🎯 {report_date} {labels['dashboard_title']}",
+            "",
+            f"> {len(results)} {labels['stock_unit']} | "
+            f"🟢{labels['buy_label']}:{buy_count} 🟡{labels['watch_label']}:{hold_count} 🔴{labels['sell_label']}:{sell_count}",
+        ]
+        self._append_market_status_line(lines, results, report_language)
+
+        # Issue #262: summary_only 时仅输出摘要列表
+        if self._report_summary_only:
+            lines.append(f"**📊 {labels['summary_heading']}**")
+            lines.append("")
+            for r in sorted_results:
+                signal_text, signal_emoji, _ = self._get_signal_level(r)
+                stock_name = self._get_display_name(r, report_language)
+                lines.append(
+                    f"{signal_emoji} **{stock_name}({r.code})**: "
+                    f"{signal_text} | "
+                    f"{labels['score_label']} {self._display_score(r, report_language)} | "
+                    f"{localize_trend_prediction(r.trend_prediction, report_language)}"
+                )
+        else:
+            for result in sorted_results:
+                signal_text, signal_emoji, _ = self._get_signal_level(result)
+                dashboard = result.dashboard if hasattr(result, 'dashboard') and result.dashboard else {}
+                core = dashboard.get('core_conclusion', {}) if dashboard else {}
+                battle = dashboard.get('battle_plan', {}) if dashboard else {}
+                intel = dashboard.get('intelligence', {}) if dashboard else {}
+
+                # 股票名称
+                stock_name = self._get_display_name(result, report_language)
+
+                # 标题行：信号等级 + 股票名称
+                lines.append(f"### {signal_emoji} **{signal_text}** | {stock_name}({result.code})")
+                lines.append("")
+
+                # 核心决策（一句话）
+                one_sentence = core.get('one_sentence', result.analysis_summary) if core else result.analysis_summary
+                if one_sentence:
+                    lines.append(f"📌 **{one_sentence[:80]}**")
+                    lines.append("")
+                # 重要信息区（舆情+基本面）
+                info_lines = []
+
+                # 业绩预期
+                if self._has_displayable_intelligence(intel.get('earnings_outlook')):
+                    outlook = str(intel['earnings_outlook'])[:60]
+                    info_lines.append(f"📊 {labels['earnings_outlook_label']}: {outlook}")
+                if self._has_displayable_intelligence(intel.get('sentiment_summary')):
                     sentiment = str(intel['sentiment_summary'])[:50]
                     info_lines.append(f"💭 {labels['sentiment_summary_label']}: {sentiment}")
                 if info_lines:
