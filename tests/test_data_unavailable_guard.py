@@ -66,6 +66,8 @@ def test_new_listing_history_is_limited_not_unavailable() -> None:
     assert evidence["short_term_resistance"] == 10.2
     assert evidence["volume_ratio_5d"] == 1.0
     assert "可進行短期趨勢" in evidence["reason"]
+    assert "短歷史標的" in evidence["setup_summary"]
+    assert "不適用" in evidence["setup_summary"]
 
 
 def test_llm_schema_failure_preserves_rule_based_core_data_for_weekly_integrity() -> None:
@@ -144,3 +146,5 @@ def test_schema_validation_failed_marker_also_preserves_rule_based_result() -> N
     assert perspective["price_position"]["support_level"] == 9.8
     assert perspective["price_position"]["resistance_level"] == 10.4
     assert perspective["volume_analysis"]["volume_ratio"] == 1.12
+    assert "規則化技術結論" in result.analysis_summary
+    assert "收盤有效站上" in result.buy_reason
