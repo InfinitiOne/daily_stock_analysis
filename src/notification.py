@@ -2804,7 +2804,8 @@ class NotificationService(
     def save_report_to_file(
         self,
         content: str,
-        filename: Optional[str] = None
+        filename: Optional[str] = None,
+        save_docx: bool = True,
     ) -> str:
         """
         保存日报到本地文件
@@ -2832,6 +2833,24 @@ class NotificationService(
             f.write(content)
 
         logger.info(f"日报已保存到: {filepath}")
+        if save_docx:
+            docx_path = filepath.with_suffix(".docx")
+            try:
+                # Reuse the private-delivery renderer so local daily reports
+                # and Drive-delivered reports have the same Markdown/table
+                # semantics.  DOCX failure must not discard the Markdown
+                # report, which remains the canonical notification payload.
+                from src.services.private_report_delivery import PrivateReportDelivery
+
+                PrivateReportDelivery._create_docx(
+                    docx_path,
+                    title="JEAC 每日投資報告",
+                    markdown=content,
+                    generated_at=datetime.now(),
+                )
+                logger.info("日报 DOCX 已保存到: %s", docx_path)
+            except Exception as exc:
+                logger.warning("日报 DOCX 产出失败，已保留 Markdown：%s", exc)
         return str(filepath)
 
     def save_and_send_feishu_file(
