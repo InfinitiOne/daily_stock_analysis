@@ -52,6 +52,7 @@ class _DummyTickFlowFetcher:
 
 
 class TestTickFlowMarketReviewFallback(unittest.TestCase):
+    @unittest.skip("China-market TickFlow routes are intentionally unsupported in the Taiwan/US report scope")
     def test_manager_prefers_tickflow_indices_when_available(self):
         manager = DataFetcherManager.__new__(DataFetcherManager)
         fallback = _DummyFetcher("AkshareFetcher", indices=[{"code": "fallback"}])
@@ -65,6 +66,7 @@ class TestTickFlowMarketReviewFallback(unittest.TestCase):
         self.assertEqual(data, [{"code": "000001"}])
         self.assertEqual(fallback.index_calls, 0)
 
+    @unittest.skip("China-market TickFlow routes are intentionally unsupported in the Taiwan/US report scope")
     def test_manager_falls_back_when_tickflow_indices_fail(self):
         manager = DataFetcherManager.__new__(DataFetcherManager)
         fallback = _DummyFetcher("AkshareFetcher", indices=[{"code": "fallback"}])
@@ -78,6 +80,7 @@ class TestTickFlowMarketReviewFallback(unittest.TestCase):
         self.assertEqual(data, [{"code": "fallback"}])
         self.assertEqual(fallback.index_calls, 1)
 
+    @unittest.skip("China-market TickFlow routes are intentionally unsupported in the Taiwan/US report scope")
     def test_manager_falls_back_when_tickflow_indices_missing(self):
         manager = DataFetcherManager.__new__(DataFetcherManager)
         fallback = _DummyFetcher("AkshareFetcher", indices=[{"code": "fallback"}])
@@ -93,7 +96,7 @@ class TestTickFlowMarketReviewFallback(unittest.TestCase):
 
     def test_manager_skips_tickflow_for_non_cn_indices(self):
         manager = DataFetcherManager.__new__(DataFetcherManager)
-        fallback = _DummyFetcher("YfinanceFetcher", indices=[{"code": "^GSPC"}])
+        fallback = _DummyFetcher("YfinanceFetcher", indices=[{"code": "SPX", "current": 1.0}])
         manager._fetchers = [fallback]
         manager._get_tickflow_fetcher = lambda: self.fail(
             "TickFlow should not be called for non-CN indices"
@@ -101,7 +104,7 @@ class TestTickFlowMarketReviewFallback(unittest.TestCase):
 
         data = DataFetcherManager.get_main_indices(manager, region="us")
 
-        self.assertEqual(data, [{"code": "^GSPC"}])
+        self.assertEqual(data, [{"code": "SPX", "current": 1.0}])
         self.assertEqual(fallback.index_calls, 1)
 
     def test_manager_falls_back_when_tickflow_market_stats_fails(self):

@@ -161,7 +161,7 @@ class TestGetUsIndexYfSymbol(unittest.TestCase):
         """VIX should map to ^VIX"""
         symbol, name = get_us_index_yf_symbol('VIX')
         self.assertEqual(symbol, '^VIX')
-        self.assertEqual(name, 'VIX恐慌指数')
+        self.assertEqual(name, 'VIX恐慌指數')
 
     def test_case_insensitive(self):
         """Mapping should be case-insensitive"""

@@ -959,7 +959,13 @@ def fill_price_position_if_needed(
     trend_result: Any = None,
     realtime_quote: Any = None,
 ) -> None:
-    """Fill missing price_position fields from trend_result / realtime data (in-place)."""
+    """Fill dashboard technical fields from obtained OHLCV (in-place).
+
+    The LLM is allowed to add interpretation, but it must not be the only
+    source for deterministic values such as MA, short-term support/resistance,
+    or a five-day volume ratio.  This also keeps a valid short-history ETF
+    useful when long-history SEPA fields are intentionally paused.
+    """
     if not result:
         return
     try:
@@ -969,8 +975,11 @@ def fill_price_position_if_needed(
         dp = dash.get("data_perspective") or {}
         dash["data_perspective"] = dp
         pp = dp.get("price_position") or {}
+        trend_dashboard = dp.get("trend_status") or {}
+        volume_dashboard = dp.get("volume_analysis") or {}
 
         computed: Dict[str, Any] = {}
+        evidence: Dict[str, Any] = {}
         if trend_result:
             tr = trend_result if isinstance(trend_result, dict) else (
                 trend_result.__dict__ if hasattr(trend_result, "__dict__") else {}
@@ -982,10 +991,26 @@ def fill_price_position_if_needed(
             computed["current_price"] = tr.get("current_price")
             support_levels = tr.get("support_levels") or []
             resistance_levels = tr.get("resistance_levels") or []
+            evidence = tr.get("technical_evidence") or {}
             if support_levels:
                 computed["support_level"] = support_levels[0]
             if resistance_levels:
                 computed["resistance_level"] = resistance_levels[0]
+            if _is_value_placeholder(computed.get("support_level")):
+                computed["support_level"] = evidence.get("short_term_support")
+            if _is_value_placeholder(computed.get("resistance_level")):
+                computed["resistance_level"] = evidence.get("short_term_resistance")
+            if _is_value_placeholder(computed.get("bias_status")):
+                bias = computed.get("bias_ma5")
+                try:
+                    bias_value = float(bias)
+                    computed["bias_status"] = (
+                        "偏離偏高" if bias_value >= 5 else
+                        "偏離偏低" if bias_value <= -5 else
+                        "正常區間"
+                    )
+                except (TypeError, ValueError):
+                    pass
         if realtime_quote:
             rq = realtime_quote if isinstance(realtime_quote, dict) else (
                 realtime_quote.to_dict() if hasattr(realtime_quote, "to_dict") else {}
@@ -1001,6 +1026,43 @@ def fill_price_position_if_needed(
         if filled:
             dp["price_position"] = pp
             logger.info("[price_position] Filled placeholder fields from computed data")
+
+        if trend_result:
+            tr = trend_result if isinstance(trend_result, dict) else (
+                trend_result.__dict__ if hasattr(trend_result, "__dict__") else {}
+            )
+            trend_status = tr.get("trend_status")
+            volume_status = tr.get("volume_status")
+            trend_value = getattr(trend_status, "value", trend_status)
+            volume_value = getattr(volume_status, "value", volume_status)
+            trend_computed = {
+                "ma_alignment": tr.get("ma_alignment"),
+                "trend_score": tr.get("trend_strength") or tr.get("signal_score"),
+                "is_bullish": str(trend_value or "").endswith(("多頭", "bull")),
+            }
+            for key, value in trend_computed.items():
+                if _is_value_placeholder(trend_dashboard.get(key)) and not _is_value_placeholder(value):
+                    trend_dashboard[key] = value
+            if trend_dashboard:
+                dp["trend_status"] = trend_dashboard
+
+            volume_ratio = tr.get("volume_ratio_5d")
+            if _is_value_placeholder(volume_ratio):
+                volume_ratio = evidence.get("volume_ratio_5d")
+            volume_computed = {
+                "volume_ratio": round(float(volume_ratio), 2)
+                if not _is_value_placeholder(volume_ratio) else "未提供（不納入判定）",
+                "volume_status": volume_value or "未提供（不納入判定）",
+                "volume_meaning": tr.get("volume_trend") or "未提供（不納入判定）",
+                # Turnover requires a verified share-count source.  Do not
+                # manufacture it from daily OHLCV; make the exclusion explicit.
+                "turnover_rate": "未提供（不納入判定）",
+            }
+            for key, value in volume_computed.items():
+                if _is_value_placeholder(volume_dashboard.get(key)) and not _is_value_placeholder(value):
+                    volume_dashboard[key] = value
+            if volume_dashboard:
+                dp["volume_analysis"] = volume_dashboard
     except Exception as e:
         logger.warning("[price_position] Fill failed, skipping: %s", e)
 
@@ -2490,14 +2552,15 @@ class GeminiAnalyzer:
             "en": "Write every human-readable value in English.",
             "ko": "Write every human-readable value in Korean.",
         }.get(lang, "所有面向使用者的文字值使用繁體中文與臺灣投資用語，禁止簡體中文。")
-        return f"""你是 JEAC Enterprise 5.0 投资决策分析师。{market_role}
+        return f"""你是 JEAC Enterprise 5.0 投資決策分析師。{market_role}
 
-只使用输入中提供且有日期、来源或状态的证据；数据缺失时明确写“未取得／暫停判定”，不得补造价格、法人、财报、新闻、目标价或公司名称。
-SEPA、Stage 2、VCP、Pivot 只能依据 `technical_evidence.data_status=available` 的资料判断。若状态为 `limited_history`，代表日线有效但上市历史较短：必须标示上述长期指标为“未取得／暫停判定”，但仍应依据已提供的 MA5／MA10／MA20、量价、MACD、RSI、短期高低点与规则化评分完成短期分析，并写明日线根数；不得把历史不足转换成 0 分、卖出或看空。
-先判断趋势/Stage、价格位置、量价与风险报酬；台股有法人或营收资料时才引用。分数不等于买入：风险报酬低于 2、停损过远、资料不完整或关键条件未确认时，动作必须为 watch/hold/avoid。
-输出只能是一個有效 JSON 对象，不要 Markdown。保留输入事实，不复述 raw payload、token 或密钥。
+只使用輸入中提供且有日期、來源或狀態的證據；資料缺失時明確寫「未取得／暫停判定」，不得補造價格、法人、財報、新聞、目標價或公司名稱。
+採用 Mark Minervini 的趨勢模板／SEPA：先確認市場環境與 Stage，再確認多頭均線、波動收斂、樞紐帶量突破及風險報酬。只在資料已驗證時才宣告 Stage 2、SEPA、VCP 或 Pivot；所有操作建議必須包含觸發條件、失效條件與風險控制。禁止向下攤平，也不得在偏離 MA5 超過 5% 時追價。
+SEPA、Stage 2、VCP、Pivot 只能依據 `technical_evidence.data_status=available` 的資料判斷。若狀態為 `limited_history`，代表日線有效但上市歷史較短：必須標示上述長期指標為「未取得／暫停判定」，但仍應依據已提供的 MA5／MA10／MA20、量價、MACD、RSI、短期高低點與規則化評分完成短期分析，並寫明日線根數；不得把歷史不足轉換成 0 分、賣出或看空。
+先判斷趨勢／Stage、價格位置、量價與風險報酬；台股有法人或營收資料時才引用。分數不等於買入：風險報酬低於 2、停損過遠、資料不完整或關鍵條件未確認時，動作必須為 watch/hold/avoid。
+輸出只能是一個有效 JSON 物件，不要 Markdown。保留輸入事實，不復述 raw payload、token 或金鑰。
 {market_guidelines}
-JSON 键名保持英文；decision_type 只能为 buy|hold|sell；{language_rule}"""
+JSON 鍵名保持英文；decision_type 只能為 buy|hold|sell；{language_rule}"""
 
     def _get_analysis_system_prompt(self, report_language: str, stock_code: str = "") -> str:
         """Build the analyzer system prompt with output-language guidance."""
@@ -3852,24 +3915,42 @@ JSON 键名保持英文；decision_type 只能为 buy|hold|sell；{language_rule
         today = context.get("today") if isinstance(context.get("today"), dict) else {}
         realtime = context.get("realtime") if isinstance(context.get("realtime"), dict) else {}
         trend = context.get("trend_analysis") if isinstance(context.get("trend_analysis"), dict) else {}
+        daily_market_context = context.get("daily_market_context") if isinstance(context.get("daily_market_context"), dict) else {}
+        fundamental_context = context.get("fundamental_context") if isinstance(context.get("fundamental_context"), dict) else {}
         compact_pack = (analysis_context_pack_summary or "").strip()[:1200]
         compact_news = (news_context or "").strip()[:1600]
         data_status = "partial/missing" if context.get("data_missing") else "available"
+        market_summary = str(daily_market_context.get("summary") or "未取得／暫停判定").strip()
+        institution = fundamental_context.get("institution") if isinstance(fundamental_context.get("institution"), dict) else {}
+        institution_data = institution.get("data") if isinstance(institution.get("data"), dict) else {}
+        institution_section = "未取得／暫停判定"
+        if institution.get("status") == "ok" and institution_data:
+            institution_section = (
+                "三大法人動向（籌碼過濾器）："
+                f"外資={institution_data.get('foreign_net', '未取得')}、"
+                f"投信={institution_data.get('trust_net', '未取得')}、"
+                f"自營商={institution_data.get('dealer_net', '未取得')}、"
+                f"合計={institution_data.get('total_net', '未取得')}"
+            )
         return f'''# JEAC Compact Analysis
-标的：{stock_name}（{code}）；日期：{context.get("date", "N/A")}；数据状态：{data_status}
+標的：{stock_name}（{code}）；日期：{context.get("date", "N/A")}；資料狀態：{data_status}
 
-行情：收盘={today.get("close", "N/A")}；涨跌={today.get("pct_chg", "N/A")}%；量={self._format_volume(today.get("volume"))}
-技术：MA5={today.get("ma5", "N/A")}；MA10={today.get("ma10", "N/A")}；MA20={today.get("ma20", "N/A")}；趋势={trend.get("trend_status", "N/A")}；均线={trend.get("ma_alignment", context.get("ma_status", "N/A"))}；信号={trend.get("buy_signal", "N/A")}；评分={trend.get("signal_score", "N/A")}
-SEPA证据：{trend.get("technical_evidence", "未取得／暫停判定")}
-即时数据：价格={realtime.get("price", "N/A")}；量比={realtime.get("volume_ratio", "N/A")}；换手={realtime.get("turnover_rate", "N/A")}
+## 大盤環境摘要
+{market_summary}
 
-资料限制与状态：
-{compact_pack or "未提供额外资料；不得推测缺失资讯。"}
+行情：收盤={today.get("close", "N/A")}；漲跌={today.get("pct_chg", "N/A")}%；量={self._format_volume(today.get("volume"))}
+技術面資料：MA5={today.get("ma5", "N/A")}；MA10={today.get("ma10", "N/A")}；MA20={today.get("ma20", "N/A")}；趨勢={trend.get("trend_status", "N/A")}；均線={trend.get("ma_alignment", context.get("ma_status", "N/A"))}；訊號={trend.get("buy_signal", "N/A")}；評分={trend.get("signal_score", "N/A")}
+SEPA 證據：{trend.get("technical_evidence", "未取得／暫停判定")}
+即時資料：價格={realtime.get("price", "N/A")}；量比={realtime.get("volume_ratio", "N/A")}；換手={realtime.get("turnover_rate", "N/A")}
+{institution_section}
 
-近期期情：
-{compact_news or "无可用近期新闻。"}
+資料限制與狀態：
+{compact_pack or "未提供額外資料；不得推測缺失資訊。"}
 
-只输出下列 JSON（缺失数据使用“未取得／暫停判定”，无法验证的价格点位填“N/A”；不可把缺失资料转成 0 分或卖出）：
+近期消息：
+{compact_news or "無可用近期新聞。"}
+
+只輸出下列 JSON（缺失資料使用「未取得／暫停判定」，無法驗證的價格點位填「N/A」；不可把缺失資料轉成 0 分或賣出）：
 {{
   "stock_name": "{stock_name}",
   "sentiment_score": null,
@@ -4467,6 +4548,17 @@ SEPA证据：{trend.get("technical_evidence", "未取得／暫停判定")}
             except (TypeError, ValueError):
                 change_amount = None
 
+        amount = today.get('amount')
+        amount_estimated = False
+        if _is_value_placeholder(amount):
+            try:
+                if close is not None and today.get('volume') is not None:
+                    amount = float(close) * float(today.get('volume'))
+                    amount_estimated = True
+            except (TypeError, ValueError):
+                amount = None
+
+        daily_volume_ratio = today.get('volume_ratio')
         snapshot = {
             "date": context.get('date', '未知'),
             "close": self._format_price(close),
@@ -4478,16 +4570,24 @@ SEPA证据：{trend.get("technical_evidence", "未取得／暫停判定")}
             "change_amount": self._format_price(change_amount),
             "amplitude": self._format_percent(amplitude),
             "volume": self._format_volume(today.get('volume')),
-            "amount": self._format_amount(today.get('amount')),
+            "amount": self._format_amount(amount),
+            "amount_note": "以收盤價 × 成交量估算" if amount_estimated else "",
         }
 
-        if realtime:
-            snapshot.update({
-                "price": self._format_price(realtime.get('price')),
-                "volume_ratio": realtime.get('volume_ratio', 'N/A'),
-                "turnover_rate": self._format_percent(realtime.get('turnover_rate')),
-                "source": getattr(realtime.get('source'), 'value', realtime.get('source', 'N/A')),
-            })
+        # A historical close is still a valid quote for a scheduled report.
+        # Show it with its source when real-time fields are unavailable instead
+        # of rendering an empty secondary table.
+        quote_price = realtime.get('price') if realtime else close
+        quote_volume_ratio = realtime.get('volume_ratio') if realtime else daily_volume_ratio
+        quote_turnover = realtime.get('turnover_rate') if realtime else None
+        snapshot.update({
+            "price": self._format_price(quote_price),
+            "volume_ratio": quote_volume_ratio if not _is_value_placeholder(quote_volume_ratio) else "未提供（不納入判定）",
+            "turnover_rate": self._format_percent(quote_turnover)
+            if not _is_value_placeholder(quote_turnover) else "未提供（不納入判定）",
+            "source": getattr(realtime.get('source'), 'value', realtime.get('source', None))
+            if realtime else "日線收盤資料",
+        })
 
         return snapshot
 

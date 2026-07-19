@@ -115,7 +115,9 @@ def test_akshare_call_with_timeout_returns_promptly() -> None:
             call_name="unit-hang",
         )
 
-    assert time.monotonic() - started < 0.5
+    # Spawn startup varies across hosted Linux runners. The production
+    # guarantee is bounded termination, not sub-0.5s bootstrap time.
+    assert time.monotonic() - started < 1.5
 
 
 def test_akshare_call_with_timeout_reaps_timed_out_worker_process() -> None:

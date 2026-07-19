@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Tests for analyzer news prompt hard constraints (Issue #697)."""
 
+import os
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -21,6 +22,7 @@ from src.analyzer import (
 )
 
 
+@patch.dict(os.environ, {"ANALYSIS_PROMPT_PROFILE": "legacy"})
 class AnalyzerNewsPromptTestCase(unittest.TestCase):
     def test_contains_trend_hint_treats_non_adjacent_negation_as_negated(self) -> None:
         self.assertFalse(_contains_trend_hint("尚未形成上升趋势，继续观察。", _BULLISH_TREND_HINTS))
@@ -116,7 +118,7 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
         prompt = analyzer._get_analysis_system_prompt("zh", stock_code="600519")
 
         self.assertIn("专注于趋势交易", prompt)
-        self.assertIn("多头排列必须条件", prompt)
+        self.assertIn("Mark Minervini", prompt)
         self.assertIn("多头排列：MA5 > MA10 > MA20", prompt)
 
     def test_analysis_prompt_requires_phase_decision_in_main_and_legacy_modes(self) -> None:

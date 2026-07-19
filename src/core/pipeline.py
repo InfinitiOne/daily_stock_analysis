@@ -82,6 +82,7 @@ from src.services.decision_signal_extractor import extract_and_persist_from_anal
 from src.services.decision_signal_summary import summarize_decision_signal
 from src.enums import ReportType
 from src.stock_analyzer import StockTrendAnalyzer, TrendAnalysisResult
+from src.services.market_symbol_utils import is_tw_etf_symbol
 from src.core.trading_calendar import (
     build_market_phase_context,
     get_effective_trading_date,
@@ -368,7 +369,13 @@ class StockAnalysisPipeline:
         if not result or result.success:
             return result
         error_text = str(getattr(result, "error_message", "") or "")
-        if "LLM response is not valid JSON" not in error_text:
+        schema_failure_markers = (
+            "LLM response is not valid JSON",
+            "schema_validation_failed",
+            "JSON 格式驗證失敗",
+            "invalid_json",
+        )
+        if not any(marker.lower() in error_text.lower() for marker in schema_failure_markers):
             return result
 
         language = normalize_report_language(report_language)
@@ -408,12 +415,14 @@ class StockAnalysisPipeline:
             },
             "intelligence": {"risk_alerts": [limitation], "positive_catalysts": []},
             "battle_plan": {
-                "sniper_points": {
-                    "ideal_buy": "N/A",
-                    "secondary_buy": "N/A",
-                    "stop_loss": "N/A",
-                    "take_profit": "N/A",
-                }
+                # No price target is invented after an LLM schema failure.
+                # The deterministic MA / support / resistance panel remains
+                # available below; a no-trade stance is explicit here.
+                "position_strategy": {
+                    "suggested_position": "觀察",
+                    "entry_plan": "等待資料來源與結構化摘要恢復後，再依支撐／壓力規則評估。",
+                    "risk_control": "不因 LLM 格式失敗新增、減碼或賣出部位。",
+                },
             },
             "phase_decision": {
                 "phase_context": {"phase": "rule_based_only"},
@@ -492,7 +501,14 @@ class StockAnalysisPipeline:
             if self._requires_weekly_technical_coverage():
                 history_start = target_date - timedelta(days=self._weekly_history_days() + 45)
                 existing_bars = self.db.get_data_range(code, history_start, target_date)
-                has_required_history = len(existing_bars or []) >= 252
+                existing_bar_count = len(existing_bars or [])
+                # New Taiwan ETFs cannot have a fabricated 252-day history.
+                # Once at least 20 verified daily bars are cached, short-term
+                # MA/volume/support-resistance analysis is sufficient for the
+                # weekly run; only long-horizon SEPA fields remain paused.
+                has_required_history = existing_bar_count >= 252 or (
+                    is_tw_etf_symbol(code) and existing_bar_count >= 20
+                )
 
             # 断点续传检查：如果最新可复用交易日的数据已存在，则跳过
             if not force_refresh and self.db.has_today_data(code, target_date) and has_required_history:
@@ -512,7 +528,7 @@ class StockAnalysisPipeline:
                 return True, None
             if not has_required_history:
                 logger.info(
-                    "%s(%s) 既有日線不足 252 根，啟動外部資料來源補齊 SEPA 歷史資料",
+                    "%s(%s) 既有日線不足本輪所需門檻，啟動外部資料來源補齊歷史資料",
                     stock_name,
                     code,
                 )
@@ -1051,6 +1067,11 @@ class StockAnalysisPipeline:
                     report_language=getattr(result, "report_language", None)
                     or getattr(self.config, "report_language", "zh"),
                 )
+                # The schema-failure fallback replaces the dashboard, so run
+                # deterministic OHLCV backfill once more afterwards.  This
+                # prevents a valid Taiwan ETF or stock from showing N/A just
+                # because the optional LLM prose was rejected.
+                fill_price_position_if_needed(result, trend_result, realtime_quote)
 
             # Step 8: 保存分析历史记录
             if result and result.success:

@@ -1020,13 +1020,13 @@ class NotificationService(
     def _clean_sniper_value(value: Any) -> str:
         """Normalize sniper point values and remove redundant label prefixes."""
         if value is None:
-            return 'N/A'
+            return '未建立（不納入交易判定）'
         if isinstance(value, (int, float)):
             return str(value)
         if not isinstance(value, str):
             return str(value)
         if not value or value == 'N/A':
-            return value
+            return '未建立（不納入交易判定）'
         prefixes = ['理想买入点：', '次优买入点：', '止损位：', '目标位：',
                      '理想买入点:', '次优买入点:', '止损位:', '目标位:',
                      'Ideal Entry:', 'Secondary Entry:', 'Stop Loss:', 'Target:']
@@ -1034,6 +1034,27 @@ class NotificationService(
             if value.startswith(prefix):
                 return value[len(prefix):]
         return value
+
+    @staticmethod
+    def _display_turnover(value: Any) -> str:
+        """Format turnover without appending a false percent sign to unavailable data."""
+        text = str(value or "").strip()
+        if not text or text.upper() in {"N/A", "NA", "NONE", "NULL"}:
+            return "未提供（不納入判定）"
+        if "未提供" in text or "未取得" in text:
+            return text
+        return f"{text}%"
+
+    @staticmethod
+    def _has_actionable_sniper_points(sniper: Dict[str, Any]) -> bool:
+        if not isinstance(sniper, dict):
+            return False
+        for key in ("ideal_buy", "secondary_buy", "stop_loss", "take_profit"):
+            value = sniper.get(key)
+            text = str(value or "").strip().upper()
+            if text and text not in {"N/A", "NA", "NONE", "NULL", "-", "—"}:
+                return True
+        return False
 
     @staticmethod
     def _phase_decision_list(value: Any) -> List[str]:
@@ -1389,9 +1410,10 @@ class NotificationService(
                         ])
                     # 量能分析
                     if vol_data:
+                        turnover_display = self._display_turnover(vol_data.get('turnover_rate'))
                         report_lines.extend([
                             f"**{labels['volume_label']}**: {labels['volume_ratio_label']} {vol_data.get('volume_ratio', 'N/A')} ({vol_data.get('volume_status', '')}) | "
-                            f"{labels['turnover_rate_label']} {vol_data.get('turnover_rate', 'N/A')}%",
+                            f"{labels['turnover_rate_label']} {turnover_display}",
                             f"💡 *{vol_data.get('volume_meaning', '')}*",
                             "",
                         ])
@@ -1428,7 +1450,7 @@ class NotificationService(
                     ])
                     # 狙击点位
                     sniper = battle.get('sniper_points', {})
-                    if sniper:
+                    if self._has_actionable_sniper_points(sniper):
                         report_lines.extend([
                             f"**📍 {labels['action_points_heading']}**",
                             "",
@@ -1438,6 +1460,11 @@ class NotificationService(
                             f"| 🔵 {labels['secondary_buy_label']} | {self._clean_sniper_value(sniper.get('secondary_buy', 'N/A'))} |",
                             f"| 🛑 {labels['stop_loss_label']} | {self._clean_sniper_value(sniper.get('stop_loss', 'N/A'))} |",
                             f"| 🎊 {labels['take_profit_label']} | {self._clean_sniper_value(sniper.get('take_profit', 'N/A'))} |",
+                            "",
+                        ])
+                    else:
+                        report_lines.extend([
+                            f"**📍 {labels['action_points_heading']}**：未建立；目前僅提供資料可驗證的支撐／壓力與均線，不以缺失資料推導交易點位。",
                             "",
                         ])
                     # 仓位策略
@@ -2017,6 +2044,10 @@ class NotificationService(
 
         report_language = self._get_report_language(result)
         labels = get_report_labels(report_language)
+        amount_display = snapshot.get('amount', 'N/A')
+        amount_note = str(snapshot.get('amount_note') or '').strip()
+        if amount_note:
+            amount_display = f"{amount_display}（{amount_note}）"
 
         lines.extend([
             f"### 📈 {labels['market_snapshot_heading']}",
@@ -2027,7 +2058,7 @@ class NotificationService(
             f"{snapshot.get('open', 'N/A')} | {snapshot.get('high', 'N/A')} | "
             f"{snapshot.get('low', 'N/A')} | {snapshot.get('pct_chg', 'N/A')} | "
             f"{snapshot.get('change_amount', 'N/A')} | {snapshot.get('amplitude', 'N/A')} | "
-            f"{snapshot.get('volume', 'N/A')} | {snapshot.get('amount', 'N/A')} |",
+            f"{snapshot.get('volume', 'N/A')} | {amount_display} |",
         ])
 
         if "price" in snapshot:
