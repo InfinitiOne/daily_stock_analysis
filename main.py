@@ -769,6 +769,14 @@ def _weekly_data_sources_markdown(results: List[Any], review_result: Any) -> str
         for source_item in source_status:
             if not isinstance(source_item, dict):
                 continue
+            # Once a market provider succeeds, prior unconfigured/fallback
+            # routes are diagnostics, not missing report fields.  Showing
+            # them as table rows made a healthy market section look broken.
+            if any(
+                isinstance(item, dict) and str(item.get("status") or "").lower() == "success"
+                for item in source_status
+            ) and str(source_item.get("status") or "").lower() != "success":
+                continue
             provider = _report_provider_name(source_item.get("provider"))
             status = _report_source_status(source_item.get("status"))
             reason = _report_markdown_cell(source_item.get("reason"), "未提供")
@@ -801,6 +809,14 @@ def _weekly_data_sources_markdown(results: List[Any], review_result: Any) -> str
             continue
         for source_item in trace:
             if not isinstance(source_item, dict):
+                continue
+            # A successful FinMind/Yahoo/TWSE result is the evidence users
+            # need.  Do not render earlier skipped API providers as if the
+            # stock itself lacked data.
+            if any(
+                isinstance(item, dict) and str(item.get("status") or "").lower() in {"success", "cached"}
+                for item in trace
+            ) and str(source_item.get("status") or "").lower() not in {"success", "cached"}:
                 continue
             provider = _report_provider_name(source_item.get("provider"), code)
             status = _report_source_status(source_item.get("status"))
@@ -962,18 +978,18 @@ def _build_private_report_markdown(
     report_type: str,
     review_result: Any = None,
 ) -> str:
-    """Build one source document for private DOCX/PPTX export."""
-    sections: List[str] = []
-    if market_report:
-        sections.append(f"# 市场环境\n\n{market_report}")
-    if results:
-        stock_report = notifier.generate_aggregate_report(results, report_type)
-        sections.append(f"# 持仓与候选股\n\n{stock_report}")
-    # Never hide a source outage behind empty cells in the private daily
-    # document.  This also makes the DOCX/PPTX audit trail match weekly
-    # reports without claiming an unavailable field was zero.
-    sections.append(_weekly_data_sources_markdown(results, review_result))
-    return "\n\n---\n\n".join(sections)
+    """Build one Taiwan-first source document for private DOCX/PPTX export."""
+    from src.services.market_segmented_report import build_taiwan_us_report
+
+    return build_taiwan_us_report(
+        title="# JEAC 投資分析報告",
+        notifier=notifier,
+        results=results,
+        report_type=report_type,
+        review_result=review_result,
+        legacy_market_report=market_report,
+        evidence_markdown=_weekly_data_sources_markdown(results, review_result),
+    )
 
 
 def run_full_analysis(
@@ -1254,7 +1270,10 @@ def run_full_analysis(
                     # completeness contract as weekly reports.  Ask the
                     # review runner for its structured source/integrity
                     # payload instead of losing that evidence in a string.
-                    return_structured=(weekly_mode or _private_report_export_enabled()),
+                    # The merged report interleaves each market review with
+                    # its holdings, so it needs the per-market payload in all
+                    # Taiwan+US scheduled runs, not only private documents.
+                    return_structured=(weekly_mode or _private_report_export_enabled() or "," in market_review_region),
                 )
                 # 如果复盘仍未执行成功，再做一次复用历史/缓存读取（防止与并发运行竞态）。
                 if not review_result and should_use_daily_market_context:
@@ -1311,17 +1330,15 @@ def run_full_analysis(
                 )
                 return False
 
-            stock_report = pipeline.notifier.generate_aggregate_report(
-                results,
-                getattr(config, "report_type", "simple"),
-            )
-            weekly_report = "\n\n---\n\n".join(
-                [
-                    "# JEAC 每週投資策略報告",
-                    f"## 台股與美股市場環境\n\n{market_report}",
-                    _weekly_data_sources_markdown(results, review_result),
-                    f"## 持倉與候選股\n\n{stock_report}",
-                ]
+            from src.services.market_segmented_report import build_taiwan_us_report
+            weekly_report = build_taiwan_us_report(
+                title="# JEAC 每週投資策略報告",
+                notifier=pipeline.notifier,
+                results=results,
+                report_type=getattr(config, "report_type", "simple"),
+                review_result=review_result,
+                legacy_market_report=market_report,
+                evidence_markdown=_weekly_data_sources_markdown(results, review_result),
             )
             from src.report_language import ensure_traditional_chinese
             weekly_report = ensure_traditional_chinese(
@@ -1377,17 +1394,16 @@ def run_full_analysis(
 
         # Issue #190: 合并推送（个股+大盘复盘）
         if merge_notification and (results or market_report) and not args.no_notify:
-            parts = []
-            if market_report:
-                parts.append(f"# 📈 大盘复盘\n\n{market_report}")
-            if results:
-                dashboard_content = pipeline.notifier.generate_aggregate_report(
-                    results,
-                    getattr(config, 'report_type', 'simple'),
+            from src.services.market_segmented_report import build_taiwan_us_report
+            if results or market_report:
+                combined_content = build_taiwan_us_report(
+                    title="# JEAC 每日投資分析",
+                    notifier=pipeline.notifier,
+                    results=results,
+                    report_type=getattr(config, 'report_type', 'simple'),
+                    review_result=review_result if 'review_result' in locals() else None,
+                    legacy_market_report=market_report,
                 )
-                parts.append(f"# 🚀 个股决策仪表盘\n\n{dashboard_content}")
-            if parts:
-                combined_content = "\n\n---\n\n".join(parts)
                 if pipeline.notifier.is_available():
                     if pipeline.notifier.send(combined_content, email_send_to_all=True, route_type="report"):
                         logger.info("已合并推送（个股+大盘复盘）")
@@ -1419,20 +1435,18 @@ def run_full_analysis(
                 now = datetime.now(tz_cn)
                 doc_title = f"{now.strftime('%Y-%m-%d %H:%M')} 大盘复盘"
 
-                # 2. 准备内容 (拼接个股分析和大盘复盘)
-                full_content = ""
-
-                # 添加大盘复盘内容（如果有）
-                if market_report:
-                    full_content += f"# 📈 大盘复盘\n\n{market_report}\n\n---\n\n"
-
-                # 添加个股决策仪表盘（使用 NotificationService 生成，按 report_type 分支）
-                if results:
-                    dashboard_content = pipeline.notifier.generate_aggregate_report(
-                        results,
-                        getattr(config, 'report_type', 'simple'),
-                    )
-                    full_content += f"# 🚀 个股决策仪表盘\n\n{dashboard_content}"
+                # Keep Feishu documents identical to the daily/weekly/monthly
+                # private report order: Taiwan market -> Taiwan stocks -> US
+                # market -> US stocks.
+                from src.services.market_segmented_report import build_taiwan_us_report
+                full_content = build_taiwan_us_report(
+                    title="# JEAC 每日投資分析",
+                    notifier=pipeline.notifier,
+                    results=results,
+                    report_type=getattr(config, 'report_type', 'simple'),
+                    review_result=review_result if 'review_result' in locals() else None,
+                    legacy_market_report=market_report,
+                )
 
                 # 3. 创建文档
                 doc_url = feishu_doc.create_daily_doc(doc_title, full_content)
