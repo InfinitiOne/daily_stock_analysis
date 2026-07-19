@@ -1520,12 +1520,12 @@ def _prepare_evaluable_tw_route(pipeline, code: str = "2330.TW") -> None:
             }
         )
     ]
-    pipeline.trend_analyzer.analyze.return_value = TrendAnalysisResult(
+    pipeline.trend_analyzer.analyze = MagicMock(return_value=TrendAnalysisResult(
         code=code,
         is_evaluable=True,
         signal_score=60,
         technical_evidence={"data_status": "available"},
-    )
+    ))
 
 class TestPipelineRouting(unittest.TestCase):
     """Test that analyze_stock routes to agent mode when config.agent_mode is True."""
