@@ -1181,29 +1181,48 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         return reasons[:4]
 
     def _build_indices_block(self, overview: MarketOverview) -> str:
-        """构建指数行情表格"""
+        """Build an index table without inventing market-wide turnover.
+
+        A price index is not a tradable security and US index providers do not
+        publish a meaningful index-level turnover.  Show the turnover column
+        only where a provider supplied that exact field; market aggregate
+        turnover belongs in a separately sourced market-breadth section.
+        """
         if not overview.indices:
             return ""
+        has_index_amount = any(idx.amount is not None for idx in overview.indices)
         if self._get_review_language() == "en":
-            lines = [
-                f"| Index | Last | Change % | Open | High | Low | Amplitude | Turnover ({self._get_turnover_unit_label()}) |",
-                "|-------|------|----------|------|------|-----|-----------|-----------------|",
-            ]
+            header = "| Index | Last | Change % | Open | High | Low | Amplitude"
+            divider = "|-------|------|----------|------|------|-----|-----------"
+            if has_index_amount:
+                header += f" | Turnover ({self._get_turnover_unit_label()})"
+                divider += "|-----------------"
+            lines = [header + " |", divider + "|"]
         else:
-            lines = [
-                "| 指数 | 最新 | 涨跌幅 | 开盘 | 最高 | 最低 | 振幅 | 成交额(亿) |",
-                "|------|------|--------|------|------|------|------|-----------|",
-            ]
+            traditional = self._uses_traditional_chinese()
+            header = (
+                "| 指數 | 最新 | 漲跌幅 | 開盤 | 最高 | 最低 | 振幅"
+                if traditional
+                else "| 指数 | 最新 | 涨跌幅 | 开盘 | 最高 | 最低 | 振幅"
+            )
+            divider = "|------|------|--------|------|------|------|------"
+            if has_index_amount:
+                header += " | 成交額（億）" if traditional else " | 成交额(亿)"
+                divider += "|-----------"
+            lines = [header + " |", divider + "|"]
         for idx in overview.indices:
             arrow = self._get_index_change_arrow(idx.change_pct)
             amount_str = self._format_turnover_value(idx.amount)
             current_str = self._format_optional_number(idx.current)
             change_str = self._format_signed_pct(idx.change_pct)
-            lines.append(
+            row = (
                 f"| {idx.name} | {current_str} | {arrow} {change_str} | "
                 f"{self._format_optional_number(idx.open)} | {self._format_optional_number(idx.high)} | "
-                f"{self._format_optional_number(idx.low)} | {self._format_optional_pct(idx.amplitude)} | {amount_str} |"
+                f"{self._format_optional_number(idx.low)} | {self._format_optional_pct(idx.amplitude)}"
             )
+            if has_index_amount:
+                row += f" | {amount_str}"
+            lines.append(row + " |")
         return "\n".join(lines)
 
     def _build_sector_block(self, overview: MarketOverview) -> str:
