@@ -2534,6 +2534,15 @@ class GeminiAnalyzer:
         return max(0.0, min(configured, 60.0))
 
     @staticmethod
+    def _get_llm_request_timeout_seconds() -> float:
+        """Bound a single provider request so a failed model cannot stall a run."""
+        try:
+            configured = float(os.getenv("LLM_REQUEST_TIMEOUT_SECONDS", "45"))
+        except (TypeError, ValueError):
+            configured = 45.0
+        return max(10.0, min(configured, 180.0))
+
+    @staticmethod
     def _get_llm_rate_limit_max_retries() -> int:
         try:
             configured = int(os.getenv("LLM_RATE_LIMIT_MAX_RETRIES", "2"))
@@ -3339,6 +3348,8 @@ JSON 鍵名保持英文；decision_type 只能為 buy|hold|sell；{language_rule
         )
         requested_temperature = generation_config.get('temperature', 0.7)
         requested_timeout = generation_config.get("timeout")
+        if requested_timeout in (None, ""):
+            requested_timeout = self._get_llm_request_timeout_seconds()
 
         models_to_try = [config.litellm_model] + (config.litellm_fallback_models or [])
         models_to_try = [m for m in models_to_try if m]

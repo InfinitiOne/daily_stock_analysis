@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [修復] 每日股票分析改為最新 run 優先、固定 25 分鐘 job 上限，並為 LLM、限流等待與基本面資料源加入日報執行時間護欄，避免單次失效拖住整批分析。
 - [修復] 新上市 ETF 日線有效但不足 252 根時，仍產出短期均線、量價、MACD、RSI 與規則化趨勢分析；僅將 SEPA、Stage 2、VCP、Pivot 標示為歷史不足而暫停。
 - [修復] 週報將新上市 ETF 的有效但不足日線歷史標示為長週期技術暫停，不再阻斷整份私有文件；LLM JSON 格式失敗時保留規則化技術資料。
 - [修復] 台股名稱查詢命中本地索引或即時行情失敗後，不再回退到 Pytdx／Baostock 等中國市場資料源。

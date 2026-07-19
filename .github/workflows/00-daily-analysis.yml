@@ -26,13 +26,15 @@ on:
 # 并发控制：同一时间只运行一个分析任务
 concurrency:
   group: stock-analysis
-  cancel-in-progress: false
+  # Keep only the latest requested daily analysis.  A stale queued run is
+  # less useful than a fresh report and previously could wait indefinitely.
+  cancel-in-progress: true
 
 jobs:
   analyze:
     runs-on: ubuntu-latest
     # 添加超时限制，防止任务卡死
-    timeout-minutes: ${{ fromJSON(vars.ANALYSIS_TIMEOUT_MINUTES || '30') }}
+    timeout-minutes: 25
     
     steps:
       - name: 随机延迟（避免固定时间访问）
@@ -93,6 +95,13 @@ jobs:
           # 精简 JEAC 例行分析的输入/输出；可将 Variable 改为 standard 恢复完整提示词。
           ANALYSIS_PROMPT_PROFILE: ${{ vars.ANALYSIS_PROMPT_PROFILE || 'compact' }}
           ANALYSIS_MAX_OUTPUT_TOKENS: ${{ vars.ANALYSIS_MAX_OUTPUT_TOKENS || '2400' }}
+          # Bound a degraded provider instead of allowing one stock to block
+          # the serial daily portfolio run for several minutes.
+          LLM_REQUEST_TIMEOUT_SECONDS: ${{ vars.LLM_REQUEST_TIMEOUT_SECONDS || '45' }}
+          LLM_REQUEST_DELAY_SECONDS: ${{ vars.LLM_REQUEST_DELAY_SECONDS || '2' }}
+          LLM_RATE_LIMIT_MAX_RETRIES: ${{ vars.LLM_RATE_LIMIT_MAX_RETRIES || '1' }}
+          LLM_RATE_LIMIT_MAX_WAIT_SECONDS: ${{ vars.LLM_RATE_LIMIT_MAX_WAIT_SECONDS || '20' }}
+          REPORT_INTEGRITY_RETRY: ${{ vars.REPORT_INTEGRITY_RETRY || '0' }}
           LLM_USAGE_HMAC_SECRET: ${{ secrets.LLM_USAGE_HMAC_SECRET }}
           LLM_USAGE_HMAC_KEY_VERSION: ${{ vars.LLM_USAGE_HMAC_KEY_VERSION || secrets.LLM_USAGE_HMAC_KEY_VERSION }}
           LLM_PROMPT_CACHE_TELEMETRY_ENABLED: ${{ vars.LLM_PROMPT_CACHE_TELEMETRY_ENABLED || secrets.LLM_PROMPT_CACHE_TELEMETRY_ENABLED }}
@@ -288,6 +297,9 @@ jobs:
           FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
           FINMIND_PRIORITY: ${{ vars.FINMIND_PRIORITY || '1' }}
           FINMIND_TIMEOUT_SECONDS: ${{ vars.FINMIND_TIMEOUT_SECONDS || '12' }}
+          FUNDAMENTAL_STAGE_TIMEOUT_SECONDS: ${{ vars.FUNDAMENTAL_STAGE_TIMEOUT_SECONDS || '25' }}
+          FUNDAMENTAL_FETCH_TIMEOUT_SECONDS: ${{ vars.FUNDAMENTAL_FETCH_TIMEOUT_SECONDS || '6' }}
+          FUNDAMENTAL_RETRY_MAX: ${{ vars.FUNDAMENTAL_RETRY_MAX || '0' }}
           # Optional US-market providers.  If they and Yahoo fail, the
           # no-key Nasdaq/FRED public-web route is still attempted.
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
