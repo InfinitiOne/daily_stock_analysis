@@ -3915,24 +3915,42 @@ JSON 鍵名保持英文；decision_type 只能為 buy|hold|sell；{language_rule
         today = context.get("today") if isinstance(context.get("today"), dict) else {}
         realtime = context.get("realtime") if isinstance(context.get("realtime"), dict) else {}
         trend = context.get("trend_analysis") if isinstance(context.get("trend_analysis"), dict) else {}
+        daily_market_context = context.get("daily_market_context") if isinstance(context.get("daily_market_context"), dict) else {}
+        fundamental_context = context.get("fundamental_context") if isinstance(context.get("fundamental_context"), dict) else {}
         compact_pack = (analysis_context_pack_summary or "").strip()[:1200]
         compact_news = (news_context or "").strip()[:1600]
         data_status = "partial/missing" if context.get("data_missing") else "available"
+        market_summary = str(daily_market_context.get("summary") or "未取得／暫停判定").strip()
+        institution = fundamental_context.get("institution") if isinstance(fundamental_context.get("institution"), dict) else {}
+        institution_data = institution.get("data") if isinstance(institution.get("data"), dict) else {}
+        institution_section = "未取得／暫停判定"
+        if institution.get("status") == "ok" and institution_data:
+            institution_section = (
+                "三大法人動向（籌碼過濾器）："
+                f"外資={institution_data.get('foreign_net', '未取得')}、"
+                f"投信={institution_data.get('trust_net', '未取得')}、"
+                f"自營商={institution_data.get('dealer_net', '未取得')}、"
+                f"合計={institution_data.get('total_net', '未取得')}"
+            )
         return f'''# JEAC Compact Analysis
-标的：{stock_name}（{code}）；日期：{context.get("date", "N/A")}；数据状态：{data_status}
+標的：{stock_name}（{code}）；日期：{context.get("date", "N/A")}；資料狀態：{data_status}
 
-行情：收盘={today.get("close", "N/A")}；涨跌={today.get("pct_chg", "N/A")}%；量={self._format_volume(today.get("volume"))}
-技术：MA5={today.get("ma5", "N/A")}；MA10={today.get("ma10", "N/A")}；MA20={today.get("ma20", "N/A")}；趋势={trend.get("trend_status", "N/A")}；均线={trend.get("ma_alignment", context.get("ma_status", "N/A"))}；信号={trend.get("buy_signal", "N/A")}；评分={trend.get("signal_score", "N/A")}
-SEPA证据：{trend.get("technical_evidence", "未取得／暫停判定")}
-即时数据：价格={realtime.get("price", "N/A")}；量比={realtime.get("volume_ratio", "N/A")}；换手={realtime.get("turnover_rate", "N/A")}
+## 大盤環境摘要
+{market_summary}
 
-资料限制与状态：
-{compact_pack or "未提供额外资料；不得推测缺失资讯。"}
+行情：收盤={today.get("close", "N/A")}；漲跌={today.get("pct_chg", "N/A")}%；量={self._format_volume(today.get("volume"))}
+技術面資料：MA5={today.get("ma5", "N/A")}；MA10={today.get("ma10", "N/A")}；MA20={today.get("ma20", "N/A")}；趨勢={trend.get("trend_status", "N/A")}；均線={trend.get("ma_alignment", context.get("ma_status", "N/A"))}；訊號={trend.get("buy_signal", "N/A")}；評分={trend.get("signal_score", "N/A")}
+SEPA 證據：{trend.get("technical_evidence", "未取得／暫停判定")}
+即時資料：價格={realtime.get("price", "N/A")}；量比={realtime.get("volume_ratio", "N/A")}；換手={realtime.get("turnover_rate", "N/A")}
+{institution_section}
 
-近期期情：
-{compact_news or "无可用近期新闻。"}
+資料限制與狀態：
+{compact_pack or "未提供額外資料；不得推測缺失資訊。"}
 
-只输出下列 JSON（缺失数据使用“未取得／暫停判定”，无法验证的价格点位填“N/A”；不可把缺失资料转成 0 分或卖出）：
+近期消息：
+{compact_news or "無可用近期新聞。"}
+
+只輸出下列 JSON（缺失資料使用「未取得／暫停判定」，無法驗證的價格點位填「N/A」；不可把缺失資料轉成 0 分或賣出）：
 {{
   "stock_name": "{stock_name}",
   "sentiment_score": null,

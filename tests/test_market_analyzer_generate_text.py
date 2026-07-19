@@ -777,6 +777,8 @@ class TestAnalyzerGenerateText:
 
         def _fake_recovery(call, **kwargs):
             captured_model_lists.append(kwargs.get("model_list"))
+            kwargs.pop("max_rate_limit_retries", None)
+            kwargs.pop("max_wait_seconds", None)
             return real_call(call, **kwargs)
 
         import src.analyzer as analyzer_module
@@ -2044,9 +2046,9 @@ class TestAnalyzerGenerateText:
             )
 
         assert result.analysis_summary == "补全后结果"
-        assert [progress for progress, _ in progress_updates] == [68, 93, 94, 95]
-        assert "补全重试" in progress_updates[2][1]
-        assert "解析 JSON" in progress_updates[3][1]
+        assert [progress for progress, _ in progress_updates] == [65, 68, 93, 94, 95]
+        assert "补全重试" in progress_updates[3][1]
+        assert "解析 JSON" in progress_updates[4][1]
 
     def test_analyze_persists_provider_usage_from_private_stream_hidden_usage_best_effort(self):
         analyzer = self._make_analyzer()
@@ -2189,15 +2191,13 @@ class TestAnalyzerGenerateText:
             marker["marker_name"]: marker
             for marker in json.loads(usage_arg["known_dynamic_marker_positions"])
         }
+        # Compact prompts retain stable identity/context markers and embed
+        # market/news data in the compact context pack.
         for marker_name in (
             "stock_code",
             "stock_name",
             "analysis_date",
-            "market_phase",
-            "daily_market_context",
             "analysis_context_pack",
-            "quote",
-            "news_context",
         ):
             assert marker_name in markers
             assert markers[marker_name]["message_role"] == "user"

@@ -1531,12 +1531,12 @@ class TestPipelineRouting(unittest.TestCase):
             # Mock _analyze_with_agent to verify it gets called
             pipeline._analyze_with_agent = MagicMock(return_value=None)
 
-            pipeline.analyze_stock("600519", ReportType.SIMPLE, "q1")
+            pipeline.analyze_stock("2330.TW", ReportType.SIMPLE, "q1")
 
             pipeline._analyze_with_agent.assert_called_once()
             call_args = pipeline._analyze_with_agent.call_args
             # Positional args: code, report_type, query_id, stock_name, realtime_quote, chip_data, fundamental_context, trend_result
-            self.assertEqual(call_args[0][0], "600519")
+            self.assertEqual(call_args[0][0], "2330.TW")
             self.assertEqual(call_args[0][1], ReportType.SIMPLE)
             self.assertEqual(call_args[0][2], "q1")
             # trend_result (8th arg) should be present (may be a TrendAnalysisResult or None)
@@ -1584,7 +1584,7 @@ class TestPipelineRouting(unittest.TestCase):
             # Mock analyzer
             pipeline.analyzer.analyze.return_value = None
 
-            result = pipeline.analyze_stock("600519", ReportType.SIMPLE, "q1")
+            result = pipeline.analyze_stock("2330.TW", ReportType.SIMPLE, "q1")
 
             # _analyze_with_agent should NOT exist as a mock (it's the real method)
             # Instead, verify analyzer.analyze was called (legacy path)
@@ -1625,7 +1625,7 @@ class TestPipelineRouting(unittest.TestCase):
             )
             pipeline._analyze_with_agent = MagicMock(return_value=None)
 
-            pipeline.analyze_stock("600519", ReportType.SIMPLE, "q1")
+            pipeline.analyze_stock("2330.TW", ReportType.SIMPLE, "q1")
 
             pipeline._analyze_with_agent.assert_called_once()
             self.assertEqual(pipeline.analysis_skills, ["growth_quality"])

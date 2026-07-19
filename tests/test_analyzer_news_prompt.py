@@ -118,7 +118,7 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
         prompt = analyzer._get_analysis_system_prompt("zh", stock_code="600519")
 
         self.assertIn("专注于趋势交易", prompt)
-        self.assertIn("多头排列必须条件", prompt)
+        self.assertIn("Mark Minervini", prompt)
         self.assertIn("多头排列：MA5 > MA10 > MA20", prompt)
 
     def test_analysis_prompt_requires_phase_decision_in_main_and_legacy_modes(self) -> None:
