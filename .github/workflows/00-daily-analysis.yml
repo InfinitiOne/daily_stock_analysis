@@ -427,6 +427,9 @@ jobs:
           # 只產生台股與美股市場環境，絕不以 A 股資料代替。
           MARKET_REVIEW_REGION: "tw,us"
           MARKET_REVIEW_COLOR_SCHEME: ${{ vars.MARKET_REVIEW_COLOR_SCHEME || secrets.MARKET_REVIEW_COLOR_SCHEME || 'green_up' }}
+          # Daily reports also evaluate SEPA/Stage/VCP; request enough
+          # history rather than classifying established listings as new.
+          JEAC_TECHNICAL_HISTORY_DAYS: "420"
           
           # ==========================================
           # 运行配置 ⬅️ 新增！

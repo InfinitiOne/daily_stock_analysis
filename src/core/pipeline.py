@@ -296,20 +296,25 @@ class StockAnalysisPipeline:
 
     @staticmethod
     def _weekly_history_days() -> int:
-        """Return the external-history request window for this run.
+        """Return the history window required for deterministic SEPA evidence.
 
-        Weekly SEPA/Stage 2 checks need a full year of trading sessions, not
-        the 30-day cache used by a normal daily report.  Keep this environment
-        controlled so scheduled workflows can request the longer window
-        without making every ad-hoc analysis slower.
+        Scheduled JEAC daily/weekly/monthly reports set a 420-day window so
+        established listings are not misclassified as short-history.  Manual
+        and non-JEAC callers retain the legacy 30-day default unless they opt
+        in through ``JEAC_TECHNICAL_HISTORY_DAYS``.
         """
         weekly_mode = str(os.getenv("JEAC_WEEKLY_PORTFOLIO_MODE", "")).strip().lower()
-        if weekly_mode not in {"1", "true", "yes", "on"}:
-            return 30
+        if weekly_mode in {"1", "true", "yes", "on"}:
+            key, default = "JEAC_WEEKLY_HISTORY_DAYS", "420"
+        else:
+            key, default = "JEAC_TECHNICAL_HISTORY_DAYS", "30"
         try:
-            return min(800, max(360, int(os.getenv("JEAC_WEEKLY_HISTORY_DAYS", "420"))))
+            requested = int(os.getenv(key, default))
+            if key == "JEAC_TECHNICAL_HISTORY_DAYS" and key not in os.environ:
+                return 30
+            return min(800, max(360, requested))
         except ValueError:
-            return 420
+            return 420 if key == "JEAC_WEEKLY_HISTORY_DAYS" else 30
 
     def _requires_weekly_technical_coverage(self) -> bool:
         return bool(getattr(self, "weekly_report_strict", False))
@@ -529,17 +534,17 @@ class StockAnalysisPipeline:
                 code, current_time=current_time
             )
 
-            # Weekly reports additionally need a full SEPA/Stage 2 history.
-            # A single current bar must never suppress the external refill.
+            # Scheduled JEAC reports opt into the full Stage/VCP/Pivot window.
+            # Keep unrelated/manual callers on the legacy resume behaviour.
+            require_technical_history = self._requires_weekly_technical_coverage() or bool(
+                str(os.getenv("JEAC_TECHNICAL_HISTORY_DAYS", "")).strip()
+            )
             has_required_history = True
-            if self._requires_weekly_technical_coverage():
+            if require_technical_history:
                 history_start = target_date - timedelta(days=self._weekly_history_days() + 45)
                 existing_bars = self.db.get_data_range(code, history_start, target_date)
                 existing_bar_count = len(existing_bars or [])
                 # New Taiwan ETFs cannot have a fabricated 252-day history.
-                # Once at least 20 verified daily bars are cached, short-term
-                # MA/volume/support-resistance analysis is sufficient for the
-                # weekly run; only long-horizon SEPA fields remain paused.
                 has_required_history = existing_bar_count >= 252 or (
                     is_tw_etf_symbol(code) and existing_bar_count >= 20
                 )

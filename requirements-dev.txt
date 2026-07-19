@@ -1,0 +1,5 @@
+# Reproducible local test environment.
+# Includes production imports used by the test suite (requests, python-dotenv)
+# and pytest itself, so a clean runner can execute `python -m pytest`.
+-r requirements.txt
+pytest>=8.0,<9.0

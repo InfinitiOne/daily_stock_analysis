@@ -835,11 +835,7 @@ class NotificationService(
         report_lines.extend(["---", ""])
 
         # 按评分排序（高分在前）
-        sorted_results = sorted(
-            results,
-            key=self._score_sort_key,
-            reverse=True
-        )
+        sorted_results = self._sort_results_for_report(results)
 
         buy_count, sell_count, hold_count = self._count_display_decisions(results, report_language)
         avg_score = self._average_score(results)
@@ -1163,6 +1159,27 @@ class NotificationService(
         return score if score is not None else -1.0
 
     @staticmethod
+    def _is_taiwan_result(result: AnalysisResult) -> bool:
+        code = str(getattr(result, "code", "") or "").upper().strip()
+        return code.endswith((".TW", ".TWO"))
+
+    def _sort_results_for_report(self, results: List[AnalysisResult]) -> List[AnalysisResult]:
+        """Keep Taiwan holdings ahead of US holdings in every report type.
+
+        The outer report composer supplies the market sections.  This stable
+        sort is also needed for stock-only/digest renderers so their order
+        cannot revert to a global score ranking.
+        """
+        return sorted(
+            results,
+            key=lambda result: (
+                0 if self._is_taiwan_result(result) else 1,
+                -self._score_sort_key(result),
+                str(getattr(result, "code", "")),
+            ),
+        )
+
+    @staticmethod
     def _display_score(result: AnalysisResult, report_language: str) -> str:
         if getattr(result, "data_status", "available") != "available":
             return "Not available" if report_language == "en" else "未取得"
@@ -1274,7 +1291,7 @@ class NotificationService(
             report_date = datetime.now().strftime('%Y-%m-%d')
 
         # 按评分排序（高分在前）
-        sorted_results = sorted(results, key=self._score_sort_key, reverse=True)
+        sorted_results = self._sort_results_for_report(results)
 
         buy_count, sell_count, hold_count = self._count_display_decisions(results, report_language)
 
@@ -1617,7 +1634,7 @@ class NotificationService(
         report_date = datetime.now().strftime('%Y-%m-%d')
 
         # 按评分排序
-        sorted_results = sorted(results, key=self._score_sort_key, reverse=True)
+        sorted_results = self._sort_results_for_report(results)
 
         buy_count, sell_count, hold_count = self._count_display_decisions(results, report_language)
 
@@ -1763,7 +1780,7 @@ class NotificationService(
         labels = get_report_labels(report_language)
 
         # 按评分排序
-        sorted_results = sorted(results, key=self._score_sort_key, reverse=True)
+        sorted_results = self._sort_results_for_report(results)
 
         buy_count, sell_count, hold_count = self._count_display_decisions(results, report_language)
         avg_score = self._average_score(results)
@@ -1854,7 +1871,7 @@ class NotificationService(
         # Fallback: brief summary from dashboard report
         if not results:
             return f"# {report_date} {labels['brief_title']}\n\n{labels['no_results']}"
-        sorted_results = sorted(results, key=self._score_sort_key, reverse=True)
+        sorted_results = self._sort_results_for_report(results)
         buy_count, sell_count, hold_count = self._count_display_decisions(results, report_language)
         lines = [
             f"# {report_date} {labels['brief_title']}",
