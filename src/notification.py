@@ -1169,6 +1169,19 @@ class NotificationService(
         value = getattr(result, "sentiment_score", None)
         return str(value) if value is not None else ("Not available" if report_language == "en" else "未取得")
 
+    @staticmethod
+    def _has_displayable_intelligence(value: Any) -> bool:
+        """Return false for model placeholders that should not become a section."""
+        if value is None:
+            return False
+        text = str(value).strip()
+        if not text:
+            return False
+        lowered = text.lower()
+        return not any(marker in lowered for marker in (
+            "未取得", "暫停判定", "未找到", "no relevant", "not available", "n/a",
+        ))
+
     def _average_score(self, results: List[AnalysisResult]) -> Optional[float]:
         scores = [self._score_value(result) for result in results]
         numeric_scores = [score for score in scores if score is not None]
@@ -1309,16 +1322,23 @@ class NotificationService(
                 ])
                 # ========== 舆情与基本面概览（放在最前面）==========
                 intel = dashboard.get('intelligence', {}) if dashboard else {}
-                if intel:
+                has_intelligence = intel and any([
+                    self._has_displayable_intelligence(intel.get('sentiment_summary')),
+                    self._has_displayable_intelligence(intel.get('earnings_outlook')),
+                    self._has_displayable_intelligence(intel.get('latest_news')),
+                    bool(intel.get('risk_alerts')),
+                    bool(intel.get('positive_catalysts')),
+                ])
+                if has_intelligence:
                     report_lines.extend([
                         f"### 📰 {labels['info_heading']}",
                         "",
                     ])
                     # 舆情情绪总结
-                    if intel.get('sentiment_summary'):
+                    if self._has_displayable_intelligence(intel.get('sentiment_summary')):
                         report_lines.append(f"**💭 {labels['sentiment_summary_label']}**: {intel['sentiment_summary']}")
                     # 业绩预期
-                    if intel.get('earnings_outlook'):
+                    if self._has_displayable_intelligence(intel.get('earnings_outlook')):
                         report_lines.append(f"**📊 {labels['earnings_outlook_label']}**: {intel['earnings_outlook']}")
                     # 风险警报（醒目显示）
                     risk_alerts = intel.get('risk_alerts', [])
@@ -1335,7 +1355,7 @@ class NotificationService(
                         for cat in catalysts:
                             report_lines.append(f"- {cat}")
                     # 最新消息
-                    if intel.get('latest_news'):
+                    if self._has_displayable_intelligence(intel.get('latest_news')):
                         report_lines.append("")
                         report_lines.append(f"**📢 {labels['latest_news_label']}**: {intel['latest_news']}")
                     report_lines.append("")
@@ -1910,14 +1930,14 @@ class NotificationService(
         # 重要信息（舆情+基本面）
         info_added = False
         if intel:
-            if intel.get('earnings_outlook'):
+            if self._has_displayable_intelligence(intel.get('earnings_outlook')):
                 if not info_added:
                     lines.append(f"### 📰 {labels['info_heading']}")
                     lines.append("")
                     info_added = True
                 lines.append(f"📊 **{labels['earnings_outlook_label']}**: {str(intel['earnings_outlook'])[:100]}")
 
-            if intel.get('sentiment_summary'):
+            if self._has_displayable_intelligence(intel.get('sentiment_summary')):
                 if not info_added:
                     lines.append(f"### 📰 {labels['info_heading']}")
                     lines.append("")
