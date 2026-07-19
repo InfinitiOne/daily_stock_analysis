@@ -53,7 +53,10 @@ def test_new_listing_history_is_limited_not_unavailable() -> None:
 
     assert evidence["data_status"] == "limited_history"
     assert evidence["sepa"] == "未取得／暫停判定"
-    assert "有效但歷史不足" in evidence["reason"]
+    assert evidence["short_term_analysis_available"] is True
+    assert evidence["short_term_lookback_bars"] == 20
+    assert evidence["ma5"] == 10.0
+    assert "可進行短期趨勢" in evidence["reason"]
 
 
 def test_llm_schema_failure_preserves_rule_based_core_data_for_weekly_integrity() -> None:

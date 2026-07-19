@@ -357,88 +357,6 @@ class StockAnalysisPipeline:
         result.technical_evidence = evidence
         return result
 
-    def _build_limited_history_result(
-        self,
-        *,
-        code: str,
-        stock_name: str,
-        trend_result: TrendAnalysisResult,
-        report_language: str,
-    ) -> AnalysisResult:
-        """Return a non-trading long-term-technical result for a new listing.
-
-        Valid daily bars remain usable in the portfolio report.  Only the
-        long-history SEPA/Stage 2/VCP/Pivot checks are paused; this must not
-        be represented as a failed data fetch or block every weekly document.
-        """
-        language = normalize_report_language(report_language)
-        paused = "長期技術判定暫停（有效日線歷史不足）"
-        evidence = dict(getattr(trend_result, "technical_evidence", {}) or {})
-        reason = str(evidence.get("reason") or paused)
-        return AnalysisResult(
-            code=code,
-            name=stock_name or code,
-            sentiment_score=None,
-            trend_prediction=paused,
-            operation_advice="觀察",
-            decision_type="hold",
-            confidence_level=localize_confidence_level("低", language),
-            report_language=language,
-            action="watch",
-            action_label="觀察",
-            dashboard={
-                "core_conclusion": {
-                    "one_sentence": paused,
-                    "signal_type": "資料有效／長期歷史不足",
-                    "time_sensitivity": "待累積足夠日線後重評",
-                    "position_advice": {
-                        "no_position": "暫不依 SEPA 建立新倉",
-                        "has_position": "依風險上限續抱觀察",
-                    },
-                },
-                "data_perspective": {
-                    "trend_status": {
-                        "ma_alignment": "未取得／暫停判定",
-                        "is_bullish": False,
-                        "trend_score": None,
-                    }
-                },
-                "intelligence": {"risk_alerts": [reason], "positive_catalysts": []},
-                "battle_plan": {
-                    "sniper_points": {
-                        "ideal_buy": "N/A",
-                        "secondary_buy": "N/A",
-                        "stop_loss": "N/A",
-                        "take_profit": "N/A",
-                    }
-                },
-                "phase_decision": {
-                    "phase_context": {"phase": "limited_history"},
-                    "action_window": "待累積至少 252 根日線",
-                    "immediate_action": "觀察",
-                    "watch_conditions": ["日線歷史達 252 根後重新計算 SEPA／Stage 2／VCP／Pivot"],
-                    "next_check_time": "下次週報",
-                    "confidence_reason": "核心日線有效，但長期技術歷史不足",
-                    "data_limitations": [reason],
-                },
-            },
-            trend_analysis=paused,
-            technical_analysis=paused,
-            ma_analysis="未取得／暫停判定",
-            volume_analysis="未取得／暫停判定",
-            analysis_summary=f"{paused}。{reason}",
-            key_points="不以不足的上市歷史計算 SEPA、Stage 2、VCP 或 Pivot。",
-            risk_warning=reason,
-            buy_reason="未取得／暫停判定",
-            success=True,
-            # Core daily data were retrieved; only the long-history indicator
-            # set is limited, so this remains available for weekly integrity.
-            data_status="available",
-            data_missing_reasons=[reason],
-            current_price=getattr(trend_result, "current_price", None),
-            technical_evidence=evidence,
-        )
-
     def _preserve_rule_based_result_after_llm_schema_failure(
         self,
         result: AnalysisResult,
@@ -836,29 +754,17 @@ class StockAnalysisPipeline:
                 )
 
             weekly_evidence = getattr(trend_result, "technical_evidence", {}) or {}
-            if (
-                self._requires_weekly_technical_coverage()
-                and weekly_evidence.get("data_status") == "limited_history"
-            ):
+            if weekly_evidence.get("data_status") == "limited_history":
                 reason = str(weekly_evidence.get("reason") or "SEPA／Stage 2 歷史日線不足")
-                logger.warning(
-                    "%s(%s) %s；保留持倉報告，暫停長期技術與 LLM 交易建議",
+                logger.info(
+                    "%s(%s) %s；繼續短期技術與 LLM 分析，僅暫停長期技術判定",
                     stock_name,
                     code,
                     reason,
                 )
-                return self._attach_daily_source_trace(
-                    self._build_limited_history_result(
-                        code=code,
-                        stock_name=stock_name,
-                        trend_result=trend_result,
-                        report_language=report_language,
-                    ),
-                    code,
-                )
             if (
                 self._requires_weekly_technical_coverage()
-                and weekly_evidence.get("data_status") != "available"
+                and weekly_evidence.get("data_status") not in {"available", "limited_history"}
             ):
                 reason = str(weekly_evidence.get("reason") or "SEPA／Stage 2 核心日線未取得")
                 logger.warning("%s(%s) %s；停止週報技術評分與 LLM 交易建議", stock_name, code, reason)

@@ -301,6 +301,9 @@ class StockTrendAnalyzer:
         history_bars = len(df)
         required_bars = 252
         if history_bars < required_bars:
+            latest = df.iloc[-1]
+            short_lookback = min(20, history_bars)
+            short_window = df.tail(short_lookback)
             return {
                 # A newly listed ETF can have valid daily bars while lacking
                 # the full lookback required by SEPA / Stage 2.  Keep this
@@ -313,9 +316,20 @@ class StockTrendAnalyzer:
                 "sepa": "未取得／暫停判定",
                 "vcp": "未取得／暫停判定",
                 "pivot": "未取得／暫停判定",
+                # The listing is still analysable with the indicators that
+                # have enough observations.  These facts let the report
+                # discuss MA5/10/20, volume, MACD and RSI without pretending
+                # that a 52-week setup exists.
+                "short_term_analysis_available": True,
+                "short_term_lookback_bars": short_lookback,
+                "ma5": round(float(latest["MA5"]), 4),
+                "ma10": round(float(latest["MA10"]), 4),
+                "ma20": round(float(latest["MA20"]), 4),
+                "short_term_high": round(float(short_window["high"].max()), 4),
+                "short_term_low": round(float(short_window["low"].min()), 4),
                 "reason": (
-                    f"日線僅 {history_bars} 根，屬有效但歷史不足；"
-                    f"SEPA／Stage 2 至少需要 {required_bars} 根日線"
+                    f"日線已取得 {history_bars} 根，可進行短期趨勢、均線、量價、MACD 與 RSI 分析；"
+                    f"SEPA／Stage 2／VCP／Pivot 至少需要 {required_bars} 根日線，故暫停判定"
                 ),
             }
 
