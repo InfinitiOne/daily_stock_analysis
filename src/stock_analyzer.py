@@ -302,14 +302,21 @@ class StockTrendAnalyzer:
         required_bars = 252
         if history_bars < required_bars:
             return {
-                "data_status": "unavailable",
+                # A newly listed ETF can have valid daily bars while lacking
+                # the full lookback required by SEPA / Stage 2.  Keep this
+                # distinct from a fetch failure so a strict weekly report can
+                # include the holding with long-term technical checks paused.
+                "data_status": "limited_history",
                 "history_bars": history_bars,
                 "required_history_bars": required_bars,
                 "stage_2": "未取得／暫停判定",
                 "sepa": "未取得／暫停判定",
                 "vcp": "未取得／暫停判定",
                 "pivot": "未取得／暫停判定",
-                "reason": f"日線僅 {history_bars} 根，SEPA／Stage 2 至少需要 {required_bars} 根日線",
+                "reason": (
+                    f"日線僅 {history_bars} 根，屬有效但歷史不足；"
+                    f"SEPA／Stage 2 至少需要 {required_bars} 根日線"
+                ),
             }
 
         latest = df.iloc[-1]

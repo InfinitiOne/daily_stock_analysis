@@ -357,6 +357,164 @@ class StockAnalysisPipeline:
         result.technical_evidence = evidence
         return result
 
+    def _build_limited_history_result(
+        self,
+        *,
+        code: str,
+        stock_name: str,
+        trend_result: TrendAnalysisResult,
+        report_language: str,
+    ) -> AnalysisResult:
+        """Return a non-trading long-term-technical result for a new listing.
+
+        Valid daily bars remain usable in the portfolio report.  Only the
+        long-history SEPA/Stage 2/VCP/Pivot checks are paused; this must not
+        be represented as a failed data fetch or block every weekly document.
+        """
+        language = normalize_report_language(report_language)
+        paused = "長期技術判定暫停（有效日線歷史不足）"
+        evidence = dict(getattr(trend_result, "technical_evidence", {}) or {})
+        reason = str(evidence.get("reason") or paused)
+        return AnalysisResult(
+            code=code,
+            name=stock_name or code,
+            sentiment_score=None,
+            trend_prediction=paused,
+            operation_advice="觀察",
+            decision_type="hold",
+            confidence_level=localize_confidence_level("低", language),
+            report_language=language,
+            action="watch",
+            action_label="觀察",
+            dashboard={
+                "core_conclusion": {
+                    "one_sentence": paused,
+                    "signal_type": "資料有效／長期歷史不足",
+                    "time_sensitivity": "待累積足夠日線後重評",
+                    "position_advice": {
+                        "no_position": "暫不依 SEPA 建立新倉",
+                        "has_position": "依風險上限續抱觀察",
+                    },
+                },
+                "data_perspective": {
+                    "trend_status": {
+                        "ma_alignment": "未取得／暫停判定",
+                        "is_bullish": False,
+                        "trend_score": None,
+                    }
+                },
+                "intelligence": {"risk_alerts": [reason], "positive_catalysts": []},
+                "battle_plan": {
+                    "sniper_points": {
+                        "ideal_buy": "N/A",
+                        "secondary_buy": "N/A",
+                        "stop_loss": "N/A",
+                        "take_profit": "N/A",
+                    }
+                },
+                "phase_decision": {
+                    "phase_context": {"phase": "limited_history"},
+                    "action_window": "待累積至少 252 根日線",
+                    "immediate_action": "觀察",
+                    "watch_conditions": ["日線歷史達 252 根後重新計算 SEPA／Stage 2／VCP／Pivot"],
+                    "next_check_time": "下次週報",
+                    "confidence_reason": "核心日線有效，但長期技術歷史不足",
+                    "data_limitations": [reason],
+                },
+            },
+            trend_analysis=paused,
+            technical_analysis=paused,
+            ma_analysis="未取得／暫停判定",
+            volume_analysis="未取得／暫停判定",
+            analysis_summary=f"{paused}。{reason}",
+            key_points="不以不足的上市歷史計算 SEPA、Stage 2、VCP 或 Pivot。",
+            risk_warning=reason,
+            buy_reason="未取得／暫停判定",
+            success=True,
+            # Core daily data were retrieved; only the long-history indicator
+            # set is limited, so this remains available for weekly integrity.
+            data_status="available",
+            data_missing_reasons=[reason],
+            current_price=getattr(trend_result, "current_price", None),
+            technical_evidence=evidence,
+        )
+
+    def _preserve_rule_based_result_after_llm_schema_failure(
+        self,
+        result: AnalysisResult,
+        *,
+        trend_result: TrendAnalysisResult,
+        report_language: str,
+    ) -> AnalysisResult:
+        """Keep valid core data when an LLM response fails JSON validation."""
+        if not result or result.success:
+            return result
+        error_text = str(getattr(result, "error_message", "") or "")
+        if "LLM response is not valid JSON" not in error_text:
+            return result
+
+        language = normalize_report_language(report_language)
+        limitation = "LLM 文字摘要未取得（JSON 格式驗證失敗）；已保留規則化技術判定。"
+        evidence = dict(getattr(trend_result, "technical_evidence", {}) or {})
+        evidence["llm_status"] = "schema_validation_failed"
+        evidence["llm_reason"] = limitation
+        score = getattr(trend_result, "signal_score", None)
+        trend_value = getattr(getattr(trend_result, "trend_status", None), "value", "未取得／暫停判定")
+        result.sentiment_score = score
+        result.trend_prediction = trend_value
+        result.operation_advice = "觀察"
+        result.decision_type = "hold"
+        result.action = "watch"
+        result.action_label = "觀察"
+        result.confidence_level = localize_confidence_level("低", language)
+        result.analysis_summary = limitation
+        result.key_points = (
+            "核心日線與規則化技術指標可用；"
+            "不採用未通過格式驗證的 LLM 內容。"
+        )
+        result.risk_warning = limitation
+        result.buy_reason = "暫不依 LLM 建立交易決策。"
+        result.dashboard = {
+            "core_conclusion": {
+                "one_sentence": limitation,
+                "signal_type": "規則化技術判定",
+                "time_sensitivity": "待 LLM 服務恢復結構化輸出後更新",
+                "position_advice": {"no_position": "觀察", "has_position": "依既有風險規則管理"},
+            },
+            "data_perspective": {
+                "trend_status": {
+                    "ma_alignment": str(getattr(trend_result, "ma_alignment", "")),
+                    "is_bullish": False,
+                    "trend_score": score,
+                }
+            },
+            "intelligence": {"risk_alerts": [limitation], "positive_catalysts": []},
+            "battle_plan": {
+                "sniper_points": {
+                    "ideal_buy": "N/A",
+                    "secondary_buy": "N/A",
+                    "stop_loss": "N/A",
+                    "take_profit": "N/A",
+                }
+            },
+            "phase_decision": {
+                "phase_context": {"phase": "rule_based_only"},
+                "action_window": "觀察",
+                "immediate_action": "觀察",
+                "watch_conditions": ["等待有效的 LLM JSON 摘要"],
+                "next_check_time": "下次報告",
+                "confidence_reason": limitation,
+                "data_limitations": [limitation],
+            },
+        }
+        result.technical_evidence = evidence
+        result.data_status = "available"
+        result.data_missing_reasons = list(getattr(result, "data_missing_reasons", []) or []) + [limitation]
+        result.success = True
+        result.error_message = None
+        logger.warning("[%s] LLM JSON 驗證失敗；以規則化技術結果繼續週報完整性檢查", result.code)
+        return result
+
     def _emit_progress(self, progress: int, message: str) -> None:
         """Best-effort bridge from pipeline stages to task SSE progress."""
         callback = getattr(self, "progress_callback", None)
@@ -680,15 +838,30 @@ class StockAnalysisPipeline:
             weekly_evidence = getattr(trend_result, "technical_evidence", {}) or {}
             if (
                 self._requires_weekly_technical_coverage()
-                and weekly_evidence.get("data_status") != "available"
+                and weekly_evidence.get("data_status") == "limited_history"
             ):
-                reason = str(weekly_evidence.get("reason") or "SEPA／Stage 2 核心日線未取得")
+                reason = str(weekly_evidence.get("reason") or "SEPA／Stage 2 歷史日線不足")
                 logger.warning(
-                    "%s(%s) %s；停止週報技術評分與 LLM 交易建議",
+                    "%s(%s) %s；保留持倉報告，暫停長期技術與 LLM 交易建議",
                     stock_name,
                     code,
                     reason,
                 )
+                return self._attach_daily_source_trace(
+                    self._build_limited_history_result(
+                        code=code,
+                        stock_name=stock_name,
+                        trend_result=trend_result,
+                        report_language=report_language,
+                    ),
+                    code,
+                )
+            if (
+                self._requires_weekly_technical_coverage()
+                and weekly_evidence.get("data_status") != "available"
+            ):
+                reason = str(weekly_evidence.get("reason") or "SEPA／Stage 2 核心日線未取得")
+                logger.warning("%s(%s) %s；停止週報技術評分與 LLM 交易建議", stock_name, code, reason)
                 return self._attach_daily_source_trace(
                     build_data_unavailable_result(
                         code,
@@ -965,6 +1138,12 @@ class StockAnalysisPipeline:
                     result,
                     report_type=report_type.value,
                     previous_operation_advice=action_source_advice,
+                )
+                result = self._preserve_rule_based_result_after_llm_schema_failure(
+                    result,
+                    trend_result=trend_result,
+                    report_language=getattr(result, "report_language", None)
+                    or getattr(self.config, "report_language", "zh"),
                 )
 
             # Step 8: 保存分析历史记录

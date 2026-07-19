@@ -121,6 +121,22 @@ class TestPrefetchStockNames(unittest.TestCase):
         remote_fetcher.get_stock_name.assert_not_called()
         self.assertEqual(manager._stock_name_cache["123456"], "索引名称")
 
+    def test_get_stock_name_for_taiwan_symbol_never_falls_back_to_china_fetchers(self):
+        manager = DataFetcherManager.__new__(DataFetcherManager)
+        china_fetcher = MagicMock()
+        china_fetcher.name = "PytdxFetcher"
+        china_fetcher.get_stock_name.return_value = "錯誤名稱"
+        manager._fetchers = [china_fetcher]
+        manager.get_realtime_quote = MagicMock()
+
+        with patch.dict("data_provider.base.STOCK_NAME_MAP", {}, clear=True), \
+             patch("data_provider.base.get_index_stock_name", return_value=None):
+            name = DataFetcherManager.get_stock_name(manager, "00403A.TW", allow_realtime=False)
+
+        self.assertEqual(name, "")
+        manager.get_realtime_quote.assert_not_called()
+        china_fetcher.get_stock_name.assert_not_called()
+
     def test_get_stock_name_prefers_static_mapping_before_index_hits(self):
         manager = DataFetcherManager.__new__(DataFetcherManager)
         manager._fetchers = []
