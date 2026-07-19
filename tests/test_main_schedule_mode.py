@@ -2158,5 +2158,28 @@ def test_private_report_source_evidence_lists_failover_without_blank_cells() -> 
     assert "未提供來源呼叫紀錄" not in markdown
 
 
+def test_private_report_source_evidence_keeps_short_history_distinct_from_fetch_failure() -> None:
+    result = SimpleNamespace(
+        code="00403A.TW",
+        data_sources="daily:TWSE",
+        data_status="available",
+        data_missing_reasons=["LLM 文字摘要未取得（JSON 格式驗證失敗）；已保留規則化技術判定。"],
+        technical_evidence={
+            "data_status": "limited_history",
+            "history_bars": 45,
+            "llm_status": "schema_validation_failed",
+        },
+        fundamental_context={"source_chain": []},
+    )
+    review = SimpleNamespace(market_review_payload={})
+
+    markdown = main._weekly_data_sources_markdown([result], review)
+
+    assert "已取得（45 根；短期技術可分析）" in markdown
+    assert "短歷史標的：長週期模板尚不適用（目前 45 根日線）" in markdown
+    assert "失敗原因：LLM" not in markdown
+    assert "LLM 摘要降級，已保留規則化技術判定" in markdown
+
+
 if __name__ == "__main__":
     unittest.main()

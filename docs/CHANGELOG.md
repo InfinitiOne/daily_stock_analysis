@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [文档] 新增 JEAC 5.0 資料來源盤點，揭露台股官方行情與 MOPS 尚未接入等限制及後續整合順序。
 - [新功能] 新增預設 `JEAC Enterprise 5.0` Strategy Skill，讓主分析、Agent、Web 與 Bot 共用 SEPA／Stage 2／VCP／Pivot、JEAC Score、風控、資料限制及情境目標規則。
 - [测试] 新增 JEAC 5.0 預設技能與既有工具契約測試，並將資料來源盤點明確收斂為 25 份相關檔案。
+- [修复] JEAC 週報接入新聞搜尋與本地情資自動刷新設定；未取得新聞時隱藏情緒、業績預期與最新動態佔位欄位。
+- [修复] 週報資料來源表區分「日線有效但長週期模板不適用」與真正日線抓取失敗，並保留 LLM JSON 降級時的規則化技術結論。
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
 

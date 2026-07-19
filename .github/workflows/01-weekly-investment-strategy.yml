@@ -62,6 +62,16 @@ jobs:
           # with Stooq retained as a final best-effort fallback.
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
+          # News and sentiment evidence.  These must be explicitly mapped:
+          # GitHub Actions does not expose arbitrary repository secrets to a run.
+          BOCHA_API_KEYS: ${{ secrets.BOCHA_API_KEYS }}
+          TAVILY_API_KEYS: ${{ secrets.TAVILY_API_KEYS }}
+          SERPAPI_API_KEYS: ${{ secrets.SERPAPI_API_KEYS }}
+          MINIMAX_API_KEYS: ${{ secrets.MINIMAX_API_KEYS }}
+          BRAVE_API_KEYS: ${{ secrets.BRAVE_API_KEYS }}
+          SEARXNG_BASE_URLS: ${{ vars.SEARXNG_BASE_URLS || secrets.SEARXNG_BASE_URLS }}
+          SEARXNG_PUBLIC_INSTANCES_ENABLED: ${{ vars.SEARXNG_PUBLIC_INSTANCES_ENABLED || secrets.SEARXNG_PUBLIC_INSTANCES_ENABLED || 'true' }}
+          NEWS_INTEL_AUTO_FETCH_ENABLED: ${{ vars.NEWS_INTEL_AUTO_FETCH_ENABLED || 'true' }}
           FUGLE_PRIORITY: ${{ vars.FUGLE_PRIORITY || '0' }}
           FINMIND_PRIORITY: ${{ vars.FINMIND_PRIORITY || '1' }}
           MARKET_REVIEW_ENABLED: ${{ vars.MARKET_REVIEW_ENABLED || 'true' }}

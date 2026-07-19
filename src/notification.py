@@ -1666,10 +1666,10 @@ class NotificationService(
                 info_lines = []
 
                 # 业绩预期
-                if intel.get('earnings_outlook'):
+                if self._has_displayable_intelligence(intel.get('earnings_outlook')):
                     outlook = str(intel['earnings_outlook'])[:60]
                     info_lines.append(f"📊 {labels['earnings_outlook_label']}: {outlook}")
-                if intel.get('sentiment_summary'):
+                if self._has_displayable_intelligence(intel.get('sentiment_summary')):
                     sentiment = str(intel['sentiment_summary'])[:50]
                     info_lines.append(f"💭 {labels['sentiment_summary_label']}: {sentiment}")
                 if info_lines:

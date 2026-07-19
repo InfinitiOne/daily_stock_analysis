@@ -3926,10 +3926,13 @@ JSON 鍵名保持英文；decision_type 只能為 buy|hold|sell；{language_rule
         compact_pack = (analysis_context_pack_summary or "").strip()[:1200]
         compact_news = (news_context or "").strip()[:1600]
         data_status = "partial/missing" if context.get("data_missing") else "available"
-        market_summary = str(daily_market_context.get("summary") or "未取得／暫停判定").strip()
+        market_summary = str(
+            daily_market_context.get("summary")
+            or "（本輪未提供大盤摘要；不必在報告中重複提及。）"
+        ).strip()
         institution = fundamental_context.get("institution") if isinstance(fundamental_context.get("institution"), dict) else {}
         institution_data = institution.get("data") if isinstance(institution.get("data"), dict) else {}
-        institution_section = "未取得／暫停判定"
+        institution_section = "（本輪未提供法人資料；不必在報告中重複提及。）"
         if institution.get("status") == "ok" and institution_data:
             institution_section = (
                 "三大法人動向（籌碼過濾器）："
@@ -3946,7 +3949,7 @@ JSON 鍵名保持英文；decision_type 只能為 buy|hold|sell；{language_rule
 
 行情：收盤={today.get("close", "N/A")}；漲跌={today.get("pct_chg", "N/A")}%；量={self._format_volume(today.get("volume"))}
 技術面資料：MA5={today.get("ma5", "N/A")}；MA10={today.get("ma10", "N/A")}；MA20={today.get("ma20", "N/A")}；趨勢={trend.get("trend_status", "N/A")}；均線={trend.get("ma_alignment", context.get("ma_status", "N/A"))}；訊號={trend.get("buy_signal", "N/A")}；評分={trend.get("signal_score", "N/A")}
-SEPA 證據：{trend.get("technical_evidence", "未取得／暫停判定")}
+SEPA 證據：{trend.get("technical_evidence", {})}
 即時資料：價格={realtime.get("price", "N/A")}；量比={realtime.get("volume_ratio", "N/A")}；換手={realtime.get("turnover_rate", "N/A")}
 {institution_section}
 
@@ -3956,7 +3959,7 @@ SEPA 證據：{trend.get("technical_evidence", "未取得／暫停判定")}
 近期消息：
 {compact_news or "無可用近期新聞。"}
 
-只輸出下列 JSON（缺失資料使用「未取得／暫停判定」，無法驗證的價格點位填「N/A」；不可把缺失資料轉成 0 分或賣出）：
+只輸出下列 JSON。沒有證據的文字欄位填空字串、清單填 []、無法驗證的價格欄位填 null；不得輸出「未取得／暫停判定」「未找到相關資訊」或以缺失資料推導買賣點，也不可把缺失資料轉成 0 分或賣出：
 {{
   "stock_name": "{stock_name}",
   "sentiment_score": null,

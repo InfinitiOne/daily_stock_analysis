@@ -701,6 +701,47 @@ def _report_markdown_cell(value: Any, fallback: str = "未取得") -> str:
     return text or fallback
 
 
+def _weekly_technical_status(evidence: Any) -> tuple[str, bool]:
+    """Describe whether daily OHLCV was obtained without conflating it with SEPA.
+
+    A newly listed ETF can have valid daily bars and a usable short-term
+    analysis while deliberately lacking the 252 sessions needed by the
+    long-horizon template.  The portfolio source table must make that
+    distinction clear instead of presenting it as a fetch failure.
+    """
+    if not isinstance(evidence, dict):
+        return "未取得／暫停判定", False
+    status = str(evidence.get("data_status") or "").strip().lower()
+    if status == "available":
+        bars = evidence.get("history_bars")
+        try:
+            return f"已取得（{int(bars)} 根日線）", True
+        except (TypeError, ValueError):
+            return "已取得", True
+    if status == "limited_history":
+        bars = evidence.get("history_bars")
+        try:
+            return f"已取得（{int(bars)} 根；短期技術可分析）", True
+        except (TypeError, ValueError):
+            return "已取得（短期技術可分析）", True
+    return "未取得／暫停判定", False
+
+
+def _weekly_setup_status(evidence: Any) -> str:
+    """Render long-horizon setup status only when that template is applicable."""
+    if not isinstance(evidence, dict):
+        return "不納入判定"
+    if str(evidence.get("data_status") or "").strip().lower() == "limited_history":
+        bars = evidence.get("history_bars")
+        try:
+            bar_text = f"（目前 {int(bars)} 根日線）"
+        except (TypeError, ValueError):
+            bar_text = ""
+        return f"短歷史標的：長週期模板尚不適用{bar_text}"
+    values = [str(evidence.get(key) or "未確認") for key in ("stage_2", "sepa", "vcp", "pivot")]
+    return "／".join(values)
+
+
 def _weekly_data_sources_markdown(results: List[Any], review_result: Any) -> str:
     """Render actual provider/status evidence; no blank cells and no invented sources."""
     lines = ["## 資料來源與完整性", "", "### 市場資料", "", "| 市場 | 核心指數 | 狀態 | 實際來源 |", "| --- | --- | --- | --- |"]
@@ -733,18 +774,20 @@ def _weekly_data_sources_markdown(results: List[Any], review_result: Any) -> str
             reason = _report_markdown_cell(source_item.get("reason"), "未提供")
             lines.append(f"| {labels[region]} | {provider} | {status} | {reason} |")
 
-    lines.extend(["", "### 持倉與候選股資料", "", "| 標的 | 日線／技術 | SEPA／Stage 2／VCP／Pivot | 基本面與資料來源 |", "| --- | --- | --- | --- |"])
+    lines.extend(["", "### 持倉與候選股資料", "", "| 標的 | 日線／技術 | Stage 2／SEPA／VCP／Pivot | 基本面與資料來源 |", "| --- | --- | --- | --- |"])
     for result in results:
         evidence = getattr(result, "technical_evidence", {}) or {}
-        tech_status = "已取得" if evidence.get("data_status") == "available" else "未取得／暫停判定"
-        setup = "／".join(str(evidence.get(key) or "未取得／暫停判定") for key in ("sepa", "stage_2", "vcp", "pivot"))
+        tech_status, has_usable_daily_data = _weekly_technical_status(evidence)
+        setup = _weekly_setup_status(evidence)
         fundamentals = getattr(result, "fundamental_context", {}) or {}
         chain = fundamentals.get("source_chain", []) if isinstance(fundamentals, dict) else []
         providers = [str(item.get("provider")) for item in chain if isinstance(item, dict) and item.get("result") == "ok" and item.get("provider")]
         source = ", ".join(dict.fromkeys(providers)) or str(getattr(result, "data_sources", "") or "未取得")
-        if tech_status != "已取得":
+        if not has_usable_daily_data:
             reasons = "；".join(getattr(result, "data_missing_reasons", []) or [])
             source = f"{source}；失敗原因：{reasons or '未提供'}"
+        elif evidence.get("llm_status") == "schema_validation_failed":
+            source = f"{source}；LLM 摘要降級，已保留規則化技術判定"
         source = _report_markdown_cell(_report_provider_list(source, getattr(result, "code", "")))
         lines.append(f"| {getattr(result, 'code', '未知')} | {tech_status} | {setup} | {source} |")
 
