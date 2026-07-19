@@ -2098,8 +2098,8 @@ class MainScheduleModeTestCase(unittest.TestCase):
         main._env_bootstrapped = False
 
 
-def test_private_report_source_evidence_lists_failover_without_blank_cells() -> None:
-    """Daily/weekly documents must expose source outcomes, not only final data."""
+def test_private_report_source_evidence_prefers_successful_route_without_blank_cells() -> None:
+    """A successful route must not be presented as a data outage."""
     result = SimpleNamespace(
         code="00403A.TW",
         data_sources="daily:TwseTpexFetcher",
@@ -2149,9 +2149,8 @@ def test_private_report_source_evidence_lists_failover_without_blank_cells() -> 
 
     markdown = main._weekly_data_sources_markdown([result], review)
 
-    assert "Fugle" in markdown
-    assert "失敗後切換備援" in markdown
-    assert "FinMind" in markdown
+    assert "Fugle" not in markdown
+    assert "FinMind" not in markdown
     assert "TWSE 官方資料" in markdown
     assert "TWSE | 已取得" in markdown
     assert "TPEx | 已取得" in markdown
