@@ -130,6 +130,43 @@ class MainScheduleModeTestCase(unittest.TestCase):
         defaults.update(overrides)
         return _DummyConfig(**defaults)
 
+    def test_monthly_mode_uses_periodic_portfolio_contract(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "JEAC_MONTHLY_PORTFOLIO_MODE": "true",
+                "JEAC_WEEKLY_PORTFOLIO_MODE": "",
+                "JEAC_PORTFOLIO_MODE": "",
+            },
+            clear=False,
+        ):
+            self.assertEqual(main._scheduled_report_kind(), "monthly")
+            self.assertTrue(main._periodic_portfolio_mode_enabled())
+            self.assertTrue(main._portfolio_mode_enabled())
+
+    def test_monthly_candidates_prefer_monthly_list_then_weekly_fallback(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "JEAC_MONTHLY_CANDIDATE_LIST": "2330.TW, NVDA",
+                "JEAC_WEEKLY_CANDIDATE_LIST": "TSM",
+            },
+            clear=False,
+        ):
+            self.assertEqual(
+                main._periodic_candidate_codes("monthly"),
+                ["2330.TW", "NVDA"],
+            )
+        with patch.dict(
+            os.environ,
+            {
+                "JEAC_MONTHLY_CANDIDATE_LIST": "",
+                "JEAC_WEEKLY_CANDIDATE_LIST": "TSM",
+            },
+            clear=False,
+        ):
+            self.assertEqual(main._periodic_candidate_codes("monthly"), ["TSM"])
+
     def test_daily_market_context_target_date_routes_jp_kr_calendars(self) -> None:
         current_time = datetime(2026, 5, 7, 0, 30, tzinfo=timezone.utc)
         calls = []
