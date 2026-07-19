@@ -2782,6 +2782,7 @@ class DataFetcherManager:
                         self._record_main_index_source_status(region, fetcher.name, "failed", "未回傳核心指數")
                     continue
                 usable = 0
+                contributed = False
                 usable_codes: set[str] = set()
                 for item in data:
                     if not isinstance(item, dict):
@@ -2816,6 +2817,7 @@ class DataFetcherManager:
                             )
                             if existing_missing and candidate_usable:
                                 primary[field] = candidate
+                                contributed = True
                                 source_fields = dict(primary.get("source_fields") or {})
                                 source_fields[field] = fetcher.name
                                 primary["source_fields"] = source_fields
@@ -2833,12 +2835,15 @@ class DataFetcherManager:
                         "success" if "TWOII" in usable_codes else "failed",
                         "取得 TWOII" if "TWOII" in usable_codes else "未回傳 TWOII",
                     )
-                elif usable:
+                elif usable or contributed:
                     self._record_main_index_source_status(
                         region,
                         fetcher.name,
                         "success",
-                        "取得 " + ", ".join(sorted(usable_codes)),
+                        (
+                            "取得 " + ", ".join(sorted(usable_codes))
+                            if usable else "補齊 " + ", ".join(sorted(usable_codes)) + " 欄位"
+                        ),
                     )
                 else:
                     self._record_main_index_source_status(
@@ -2847,9 +2852,14 @@ class DataFetcherManager:
                         "failed",
                         "未回傳可用核心指數",
                     )
-                if usable:
+                if usable or contributed:
                     sources.append(fetcher.name)
-                    logger.info("[%s] 获取指数行情成功 count=%d", fetcher.name, usable)
+                    logger.info(
+                        "[%s] 获取指数行情成功 count=%d supplemented=%s",
+                        fetcher.name,
+                        usable,
+                        contributed,
+                    )
                     if not target_required:
                         return list(merged.values()), fetcher.name
                     # Do not return as soon as the required codes exist for
