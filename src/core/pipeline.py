@@ -303,9 +303,13 @@ class StockAnalysisPipeline:
         and non-JEAC callers retain the legacy 30-day default unless they opt
         in through ``JEAC_TECHNICAL_HISTORY_DAYS``.
         """
-        weekly_mode = str(os.getenv("JEAC_WEEKLY_PORTFOLIO_MODE", "")).strip().lower()
-        if weekly_mode in {"1", "true", "yes", "on"}:
-            key, default = "JEAC_WEEKLY_HISTORY_DAYS", "420"
+        periodic_mode = any(
+            str(os.getenv(name, "")).strip().lower() in {"1", "true", "yes", "on"}
+            for name in ("JEAC_WEEKLY_PORTFOLIO_MODE", "JEAC_MONTHLY_PORTFOLIO_MODE")
+        )
+        if periodic_mode:
+            key = "JEAC_MONTHLY_HISTORY_DAYS" if str(os.getenv("JEAC_MONTHLY_PORTFOLIO_MODE", "")).strip().lower() in {"1", "true", "yes", "on"} else "JEAC_WEEKLY_HISTORY_DAYS"
+            default = "420"
         else:
             key, default = "JEAC_TECHNICAL_HISTORY_DAYS", "30"
         try:
@@ -314,7 +318,7 @@ class StockAnalysisPipeline:
                 return 30
             return min(800, max(360, requested))
         except ValueError:
-            return 420 if key == "JEAC_WEEKLY_HISTORY_DAYS" else 30
+            return 420 if key in {"JEAC_WEEKLY_HISTORY_DAYS", "JEAC_MONTHLY_HISTORY_DAYS"} else 30
 
     def _requires_weekly_technical_coverage(self) -> bool:
         return bool(getattr(self, "weekly_report_strict", False))

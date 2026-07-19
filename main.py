@@ -862,6 +862,24 @@ def _weekly_portfolio_mode_enabled() -> bool:
     return os.getenv("JEAC_WEEKLY_PORTFOLIO_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _monthly_portfolio_mode_enabled() -> bool:
+    """Return whether this is the strict scheduled monthly portfolio review."""
+    return os.getenv("JEAC_MONTHLY_PORTFOLIO_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _periodic_portfolio_mode_enabled() -> bool:
+    """Monthly and weekly reports share the same evidence and integrity gate."""
+    return _weekly_portfolio_mode_enabled() or _monthly_portfolio_mode_enabled()
+
+
+def _scheduled_report_kind() -> str:
+    if _monthly_portfolio_mode_enabled():
+        return "monthly"
+    if _weekly_portfolio_mode_enabled():
+        return "weekly"
+    return "daily"
+
+
 def _portfolio_mode_enabled() -> bool:
     """Return whether this run must use the protected current-portfolio master.
 
@@ -870,13 +888,20 @@ def _portfolio_mode_enabled() -> bool:
     reduce the analysis to one unrelated symbol.
     """
 
-    return _weekly_portfolio_mode_enabled() or os.getenv(
+    return _periodic_portfolio_mode_enabled() or os.getenv(
         "JEAC_PORTFOLIO_MODE", ""
     ).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _weekly_candidate_codes() -> List[str]:
-    raw = os.getenv("JEAC_WEEKLY_CANDIDATE_LIST", "")
+def _periodic_candidate_codes(report_kind: str) -> List[str]:
+    raw = os.getenv(
+        "JEAC_MONTHLY_CANDIDATE_LIST" if report_kind == "monthly" else "JEAC_WEEKLY_CANDIDATE_LIST",
+        "",
+    )
+    if not raw and report_kind == "monthly":
+        # A monthly run remains useful before a separately curated monthly
+        # candidate list is configured.
+        raw = os.getenv("JEAC_WEEKLY_CANDIDATE_LIST", "")
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
@@ -886,10 +911,11 @@ def _save_weekly_integrity_block_report(
     expected_codes: List[str],
     results: List[Any],
     reason: str,
+    report_kind: str = "weekly",
 ) -> None:
     result_by_code = {str(getattr(item, "code", "")): item for item in results}
     lines = [
-        "# JEAC Weekly Report — 未取得／暫停判定",
+        f"# JEAC {'每月投資檢討' if report_kind == 'monthly' else '每週投資策略'}報告 — 未取得／暫停判定",
         "",
         f"原因：{reason}",
         "",
@@ -917,7 +943,7 @@ def _save_weekly_integrity_block_report(
     try:
         notifier.save_report_to_file(
             "\n".join(lines),
-            f"weekly_report_blocked_{datetime.now().strftime('%Y%m%d')}.md",
+            f"{report_kind}_report_blocked_{datetime.now().strftime('%Y%m%d')}.md",
         )
     except Exception as exc:
         logger.warning("保存周报完整性阻断说明失败: %s", exc)
@@ -1013,7 +1039,8 @@ def run_full_analysis(
         _refresh_stock_index_cache_for_analysis(config)
 
         weekly_portfolio = None
-        weekly_mode = _weekly_portfolio_mode_enabled()
+        report_kind = _scheduled_report_kind()
+        weekly_mode = _periodic_portfolio_mode_enabled()
         portfolio_mode = _portfolio_mode_enabled()
         weekly_expected_codes: List[str] = []
         if portfolio_mode:
@@ -1028,7 +1055,7 @@ def run_full_analysis(
             weekly_portfolio = load_current_portfolio()
             weekly_expected_codes = merge_weekly_symbols(
                 weekly_portfolio,
-                _weekly_candidate_codes() if weekly_mode else (),
+                _periodic_candidate_codes(report_kind) if weekly_mode else (),
             )
             stock_codes = list(weekly_expected_codes)
             # The weekly portfolio is supplied by a secret.  Do not expose
@@ -1169,7 +1196,7 @@ def run_full_analysis(
             missing = [code for code in weekly_expected_codes if code not in completed_codes]
             if unavailable or missing:
                 reason = (
-                    "核心数据未完整取得；未生成完整周报。"
+                    f"核心数据未完整取得；未生成完整{'月報' if report_kind == 'monthly' else '週報'}。"
                     f" unavailable={','.join(unavailable) or '-'}"
                     f" missing={','.join(missing) or '-'}"
                 )
@@ -1179,6 +1206,7 @@ def run_full_analysis(
                     expected_codes=weekly_expected_codes,
                     results=results,
                     reason=reason,
+                    report_kind=report_kind,
                 )
                 return False
 
@@ -1305,13 +1333,14 @@ def run_full_analysis(
 
         if weekly_mode:
             if not market_report:
-                reason = "市场资料未取得；未生成完整周报。"
+                reason = f"市場資料未取得；未生成完整{'月報' if report_kind == 'monthly' else '週報'}。"
                 logger.error("[weekly-integrity] %s", reason)
                 _save_weekly_integrity_block_report(
                     pipeline.notifier,
                     expected_codes=weekly_expected_codes,
                     results=results,
                     reason=reason,
+                    report_kind=report_kind,
                 )
                 return False
 
@@ -1320,19 +1349,20 @@ def run_full_analysis(
                 market_review_region,
             )
             if market_reason:
-                reason = f"市場核心資料未完整取得；未生成完整週報。{market_reason}"
+                reason = f"市場核心資料未完整取得；未生成完整{'月報' if report_kind == 'monthly' else '週報'}。{market_reason}"
                 logger.error("[weekly-integrity] %s", reason)
                 _save_weekly_integrity_block_report(
                     pipeline.notifier,
                     expected_codes=weekly_expected_codes,
                     results=results,
                     reason=reason,
+                    report_kind=report_kind,
                 )
                 return False
 
             from src.services.market_segmented_report import build_taiwan_us_report
-            weekly_report = build_taiwan_us_report(
-                title="# JEAC 每週投資策略報告",
+            periodic_report = build_taiwan_us_report(
+                title=("# JEAC 每月投資檢討報告" if report_kind == "monthly" else "# JEAC 每週投資策略報告"),
                 notifier=pipeline.notifier,
                 results=results,
                 report_type=getattr(config, "report_type", "simple"),
@@ -1341,25 +1371,25 @@ def run_full_analysis(
                 evidence_markdown=_weekly_data_sources_markdown(results, review_result),
             )
             from src.report_language import ensure_traditional_chinese
-            weekly_report = ensure_traditional_chinese(
-                weekly_report,
+            periodic_report = ensure_traditional_chinese(
+                periodic_report,
                 os.getenv("REPORT_LANGUAGE") or getattr(config, "report_language", ""),
             )
             pipeline.notifier.save_report_to_file(
-                weekly_report,
-                f"weekly_report_{datetime.now().strftime('%Y%m%d')}.md",
+                periodic_report,
+                f"{report_kind}_report_{datetime.now().strftime('%Y%m%d')}.md",
             )
             # The private exporter is reached only after market, holding, and
             # candidate data have all passed the weekly integrity gate.
-            _export_private_report(report_kind="weekly", markdown=weekly_report)
+            _export_private_report(report_kind=report_kind, markdown=periodic_report)
             if not args.no_notify and pipeline.notifier.is_available():
                 if not pipeline.notifier.send(
-                    weekly_report,
+                    periodic_report,
                     email_send_to_all=True,
                     route_type="report",
                 ):
-                    logger.warning("完整周报推送失败")
-            logger.info("完整周报已通过市场、持仓与候选股数据完整性检查")
+                    logger.warning("完整%s報推送失敗", "月" if report_kind == "monthly" else "週")
+            logger.info("完整%s報已通過市場、持倉與候選股資料完整性檢查", "月" if report_kind == "monthly" else "週")
             return True
 
         # Daily document export has the same fail-closed rule: no incomplete
