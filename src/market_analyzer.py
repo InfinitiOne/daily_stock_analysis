@@ -113,6 +113,8 @@ class MarketOverview:
     index_source: str = "未取得"
     core_data_status: str = "unavailable"
     missing_core_indices: List[str] = field(default_factory=list)
+    breadth_source: str = ""
+    institutional_flow: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -580,7 +582,10 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         try:
             logger.info("[大盘] %s action=get_market_stats status=start", self._log_context())
 
-            stats = self.data_manager.get_market_stats(purpose=f"market_review:{self.region}")
+            if self.region == "tw":
+                stats = self.data_manager.get_taiwan_market_breadth()
+            else:
+                stats = self.data_manager.get_market_stats(purpose=f"market_review:{self.region}")
 
             if stats:
                 overview.up_count = stats.get('up_count', 0)
@@ -589,6 +594,11 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
                 overview.limit_up_count = stats.get('limit_up_count', 0)
                 overview.limit_down_count = stats.get('limit_down_count', 0)
                 overview.total_amount = stats.get('total_amount', 0.0)
+                overview.breadth_source = str(stats.get("source") or "")
+                if self.region == "tw":
+                    overview.institutional_flow = self.data_manager.get_taiwan_market_institutional_net(
+                        stats.get("as_of")
+                    )
 
                 logger.info(
                     "[大盘] %s action=get_market_stats status=success up=%s down=%s flat=%s "
@@ -913,9 +923,18 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
                 "flat_count": overview.flat_count,
                 "limit_up_count": overview.limit_up_count,
                 "limit_down_count": overview.limit_down_count,
-                "total_amount": overview.total_amount,
+                # Taiwan official daily rows are denominated in TWD, while
+                # the cross-market payload convention is the displayed
+                # turnover unit.  Do the conversion once here so consumers do
+                # not accidentally label raw TWD as hundreds of millions.
+                "total_amount": (
+                    overview.total_amount / 1e8 if self.region == "tw" else overview.total_amount
+                ),
                 "turnover_unit": self._get_turnover_unit_label(),
+                "source": overview.breadth_source or None,
             }
+        if isinstance(overview.institutional_flow, dict) and overview.institutional_flow:
+            payload["institutional_flow"] = dict(overview.institutional_flow)
 
         return payload
 
@@ -1078,9 +1097,28 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
             "| 指标 | 数值 | 观察 |",
             "|------|------|------|",
             f"| 上涨/下跌/平盘 | {overview.up_count} / {overview.down_count} / {overview.flat_count} | 上涨占比(不含平盘) {up_ratio:.1%} |",
-            f"| 涨停/跌停 | {overview.limit_up_count} / {overview.limit_down_count} | 涨跌停差 {limit_spread:+d} |",
+            (
+                f"| 漲停/跌停 | {overview.limit_up_count} / {overview.limit_down_count} | 漲跌停差 {limit_spread:+d} |"
+                if self.region != "tw"
+                else "| 漲停/跌停 | 不適用 | 官方全市場日資料未提供統一漲跌停彙總 |"
+            ),
             f"| 两市成交额 | {overview.total_amount:.0f} 亿 | {self._describe_turnover(overview.total_amount)} |",
         ]
+        if self.region == "tw":
+            lines[-1] = (
+                f"| 市場成交額 | {overview.total_amount / 1e8:.0f} 億元 | "
+                f"TWSE＋TPEx 官方日資料 |"
+            )
+            flow = overview.institutional_flow if isinstance(overview.institutional_flow, dict) else {}
+            if flow:
+                def _shares(key: str) -> str:
+                    value = flow.get(key)
+                    return f"{float(value) / 1e8:+.2f} 億股" if isinstance(value, (int, float)) else "—"
+                lines.extend([
+                    f"| 三大法人淨買賣超 | {_shares('total_net')} | "
+                    f"外資 {_shares('foreign_net')}／投信 {_shares('trust_net')}／自營商 {_shares('dealer_net')} |",
+                    f"| 資料來源 | {overview.breadth_source or 'TWSE／TPEx'} | {flow.get('source') or 'TWSE-T86／TPEx OpenAPI'} |",
+                ])
         return "\n".join(lines)
 
     def build_market_light_snapshot(self, overview: MarketOverview) -> Dict[str, Any]:

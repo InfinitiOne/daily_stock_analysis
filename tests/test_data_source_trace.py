@@ -84,3 +84,39 @@ def test_taiwan_index_status_distinguishes_twse_and_tpex_success() -> None:
     assert source == "TwseTpexFetcher"
     assert status["TWSE"]["status"] == "success"
     assert status["TPEx"]["status"] == "success"
+
+
+def test_taiwan_index_merges_official_close_with_public_ohlc() -> None:
+    manager = _manager_with(
+        [
+            _IndexFetcher(
+                "TwseTpexFetcher",
+                [{"code": "TWII", "current": 23000.0, "change_pct": 0.4}],
+            ),
+            _IndexFetcher(
+                "YfinanceFetcher",
+                [
+                    {
+                        "code": "TWII",
+                        "current": 22999.5,
+                        "open": 22900.0,
+                        "high": 23100.0,
+                        "low": 22850.0,
+                        "prev_close": 22908.0,
+                        "amplitude": 1.09,
+                    }
+                ],
+            ),
+        ]
+    )
+
+    data, source = manager.get_main_indices_with_source("tw")
+
+    assert source == "TwseTpexFetcher + YfinanceFetcher"
+    assert len(data) == 1
+    assert data[0]["current"] == 23000.0  # official close remains primary
+    assert data[0]["open"] == 22900.0
+    assert data[0]["high"] == 23100.0
+    assert data[0]["low"] == 22850.0
+    assert data[0]["amplitude"] == 1.09
+    assert data[0]["source_fields"]["open"] == "YfinanceFetcher"

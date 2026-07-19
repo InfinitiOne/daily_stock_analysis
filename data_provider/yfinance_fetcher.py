@@ -333,7 +333,10 @@ class YfinanceFetcher(BaseFetcher):
             'low': low,
             'prev_close': prev_close,
             'volume': float(today_row['Volume']),
-            'amount': 0.0,  # Yahoo Finance 不提供准确成交额
+            # A price index is not a tradable security.  Yahoo's bar volume
+            # is not a dollar turnover figure, so keep this absent instead of
+            # rendering a misleading "成交額未取得" column in the report.
+            'amount': None,
             'amplitude': amplitude,
         }
 
@@ -880,6 +883,21 @@ class YfinanceFetcher(BaseFetcher):
             except Exception:
                 name = STOCK_NAME_MAP.get(symbol, '')
 
+            # Yahoo publishes market capitalization for many Taiwan and US
+            # stocks.  Together with the same quote's price and volume this
+            # gives a reproducible *total-shares* turnover rate:
+            # volume / (market_cap / price).  It is deliberately not called
+            # free-float turnover, because Yahoo's market cap uses total
+            # shares outstanding rather than an exchange free-float field.
+            turnover_rate = None
+            try:
+                if price and volume and market_cap and float(market_cap) > 0:
+                    implied_shares = float(market_cap) / float(price)
+                    if implied_shares > 0:
+                        turnover_rate = round(float(volume) / implied_shares * 100, 4)
+            except (TypeError, ValueError, ZeroDivisionError):
+                turnover_rate = None
+
             missing_fields = [
                 field
                 for field, value in {
@@ -906,7 +924,7 @@ class YfinanceFetcher(BaseFetcher):
                 volume=volume,
                 amount=None,  # yfinance 不直接提供成交额
                 volume_ratio=None,
-                turnover_rate=None,
+                turnover_rate=turnover_rate,
                 amplitude=round(amplitude, 2) if amplitude is not None else None,
                 open_price=open_price,
                 high=high,

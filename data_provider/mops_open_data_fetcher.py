@@ -38,6 +38,12 @@ def _number(value: Any) -> Optional[float]:
         return None
 
 
+def _thousand_twd(value: Any) -> Optional[float]:
+    """Convert MOPS t187ap14 monetary fields (thousand TWD) to TWD."""
+    parsed = _number(value)
+    return parsed * 1000.0 if parsed is not None else None
+
+
 class MopsOpenDataFetcher:
     """No-key official Taiwan monthly-revenue / financial-data fallback."""
 
@@ -180,13 +186,22 @@ class MopsOpenDataFetcher:
         if financial_row:
             year = str(financial_row.get("年度") or "").strip()
             quarter = str(financial_row.get("季別") or "").strip()
+            report_date = None
+            try:
+                report_date = f"{int(year) + 1911}-Q{int(quarter)}" if year and quarter else None
+            except ValueError:
+                report_date = f"{year}Q{quarter}" if year and quarter else None
+            net_profit_after_tax = _thousand_twd(financial_row.get("稅後淨利"))
             financial_report = {
+                "report_date": report_date,
                 "period_roc": f"{year}Q{quarter}" if year and quarter else None,
-                "revenue": _number(financial_row.get("營業收入")),
+                "revenue": _thousand_twd(financial_row.get("營業收入")),
                 # MOPS t187ap14 publishes after-tax net profit, not an
-                # attributable-to-parent field; retain the official label.
-                "net_profit_after_tax": _number(financial_row.get("稅後淨利")),
-                "operating_profit": _number(financial_row.get("營業利益")),
+                # attributable-to-parent field.  Use it as the normalized
+                # report value while retaining its official provenance.
+                "net_profit_parent": net_profit_after_tax,
+                "net_profit_after_tax": net_profit_after_tax,
+                "operating_profit": _thousand_twd(financial_row.get("營業利益")),
                 "basic_eps": _number(financial_row.get("基本每股盈餘(元)")),
                 "currency": "TWD",
             }

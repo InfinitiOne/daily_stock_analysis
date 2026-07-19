@@ -168,6 +168,46 @@ class TwInstitutionalFetcher:
                 return None
         return record
 
+    def get_market_institutional_net(self, date: Optional[str] = None) -> Optional[dict]:
+        """Return exchange-wide three-institution net flow, with provenance.
+
+        The two official routes are independently fail-open.  TPEx serves its
+        latest trading day only, therefore the returned payload records each
+        market's own as-of date rather than silently claiming a single date.
+        """
+        tables: list[tuple[str, Dict[str, dict]]] = []
+        for market in ("twse", "tpex"):
+            try:
+                table = self._whole_market(market, date if market == "twse" else None)
+            except Exception as exc:  # noqa: BLE001 - public endpoint fail-open
+                logger.info("[tw-inst] market aggregate unavailable market=%s: %s", market, exc)
+                continue
+            if table:
+                tables.append((market, table))
+        if not tables:
+            return None
+
+        totals = {"foreign_net": 0, "trust_net": 0, "dealer_net": 0, "total_net": 0}
+        as_of: dict[str, str] = {}
+        coverage: dict[str, int] = {}
+        for market, table in tables:
+            coverage[market] = len(table)
+            sample = next(iter(table.values()), {})
+            if sample.get("date"):
+                as_of[market] = str(sample["date"])
+            for record in table.values():
+                for key in totals:
+                    value = record.get(key)
+                    if isinstance(value, int):
+                        totals[key] += value
+        return {
+            **totals,
+            "unit": "shares",
+            "source": "TWSE-T86 + TPEx-OpenAPI",
+            "coverage": coverage,
+            "as_of": as_of,
+        }
+
     # ------------------------------------------------------------------ routing
     @staticmethod
     def _market_of(stock_code: Any) -> Optional[str]:

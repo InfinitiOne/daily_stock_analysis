@@ -1448,9 +1448,14 @@ class NotificationService(
                     # 量能分析
                     if vol_data:
                         turnover_display = self._display_turnover(vol_data.get('turnover_rate'))
+                        turnover_text = (
+                            f" | {labels['turnover_rate_label']} {turnover_display}"
+                            if turnover_display != "未提供（不納入判定）" else ""
+                        )
                         report_lines.extend([
                             f"**{labels['volume_label']}**: {labels['volume_ratio_label']} {vol_data.get('volume_ratio', 'N/A')} ({vol_data.get('volume_status', '')}) | "
-                            f"{labels['turnover_rate_label']} {turnover_display}",
+                            f"{turnover_text.lstrip(' | ')}" if turnover_text else
+                            f"**{labels['volume_label']}**: {labels['volume_ratio_label']} {vol_data.get('volume_ratio', 'N/A')} ({vol_data.get('volume_status', '')})",
                             f"💡 *{vol_data.get('volume_meaning', '')}*",
                             "",
                         ])
@@ -2100,13 +2105,23 @@ class NotificationService(
 
         if "price" in snapshot:
             display_source = self._get_source_display_name(snapshot.get('source', 'N/A'), report_language)
-            lines.extend([
-                "",
-                f"| {labels['current_price_label']} | {labels['volume_ratio_label']} | {labels['turnover_rate_label']} | {labels['source_label']} |",
-                "|-------|------|--------|----------|",
-                f"| {snapshot.get('price', 'N/A')} | {snapshot.get('volume_ratio', 'N/A')} | "
-                f"{snapshot.get('turnover_rate', 'N/A')} | {display_source} |",
-            ])
+            turnover = snapshot.get("turnover_rate")
+            has_turnover = turnover not in (None, "", "N/A", "未提供（不納入判定）")
+            turnover_note = str(snapshot.get("turnover_rate_note") or "")
+            lines.append("")
+            if has_turnover:
+                lines.extend([
+                    f"| {labels['current_price_label']} | {labels['volume_ratio_label']} | {labels['turnover_rate_label']} | {labels['source_label']} |",
+                    "|-------|------|--------|----------|",
+                    f"| {snapshot.get('price', 'N/A')} | {snapshot.get('volume_ratio', 'N/A')} | "
+                    f"{turnover}{turnover_note} | {display_source} |",
+                ])
+            else:
+                lines.extend([
+                    f"| {labels['current_price_label']} | {labels['volume_ratio_label']} | {labels['source_label']} |",
+                    "|-------|------|----------|",
+                    f"| {snapshot.get('price', 'N/A')} | {snapshot.get('volume_ratio', 'N/A')} | {display_source} |",
+                ])
 
         lines.append("")
 
@@ -2265,6 +2280,32 @@ class NotificationService(
             "gross_margin": self._format_percent(growth.get("gross_margin")),
         }
         if all(v == "N/A" for v in cells.values()):
+            return
+
+        # Never publish a wide table padded with N/A cells.  Financial
+        # statements are reported on different calendars and providers; show
+        # the verified fields with their report period instead of presenting
+        # absent cash-flow or margin fields as if they were failed analysis.
+        ordered_cells = [
+            (labels['report_date_label'], cells['report_date']),
+            (labels['revenue_label'], cells['revenue']),
+            (labels['net_profit_label'], cells['net_profit']),
+            (labels['operating_cash_flow_label'], cells['operating_cash_flow']),
+            (labels['roe_label'], cells['roe']),
+            (labels['revenue_yoy_label'], cells['revenue_yoy']),
+            (labels['net_profit_yoy_label'], cells['net_profit_yoy']),
+            (labels['gross_margin_label'], cells['gross_margin']),
+        ]
+        available_cells = [(label, value) for label, value in ordered_cells if value != "N/A"]
+        if len(available_cells) < len(ordered_cells):
+            lines.extend([
+                f"### 💼 {labels['financial_summary_heading']}",
+                "",
+                "| " + " | ".join(label for label, _ in available_cells) + " |",
+                "|" + "|".join("---:" for _ in available_cells) + "|",
+                "| " + " | ".join(value for _, value in available_cells) + " |",
+                "",
+            ])
             return
 
         lines.extend([

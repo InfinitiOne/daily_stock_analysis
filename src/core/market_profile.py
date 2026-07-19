@@ -38,7 +38,9 @@ TW_PROFILE = MarketProfile(
         "台股 三大法人 半導體",
     ],
     prompt_index_hint="分析臺灣加權指數與櫃買指數的走勢、量價與產業輪動；僅引用已提供資料，未取得資料須明確標示。",
-    has_market_stats=False,
+    # Official TWSE/TPEx end-of-day rows provide breadth and aggregate
+    # turnover; this enables a supported Taiwan market-structure section.
+    has_market_stats=True,
     has_sector_rankings=False,
     required_index_codes=["TWII", "TWOII"],
 )

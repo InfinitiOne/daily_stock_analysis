@@ -1054,8 +1054,8 @@ def fill_price_position_if_needed(
                 if not _is_value_placeholder(volume_ratio) else "未提供（不納入判定）",
                 "volume_status": volume_value or "未提供（不納入判定）",
                 "volume_meaning": tr.get("volume_trend") or "未提供（不納入判定）",
-                # Turnover requires a verified share-count source.  Do not
-                # manufacture it from daily OHLCV; make the exclusion explicit.
+                # Filled below only from a quote with a verified share-count
+                # or market-cap source.  Daily OHLCV alone is not enough.
                 "turnover_rate": "未提供（不納入判定）",
             }
             for key, value in volume_computed.items():
@@ -1069,6 +1069,43 @@ def fill_price_position_if_needed(
                     volume_dashboard[key] = value
             if volume_dashboard:
                 dp["volume_analysis"] = volume_dashboard
+                # ``market_snapshot`` is built before LLM parsing.  Keep the
+                # rendered quote table synchronized with the verified daily
+                # OHLCV calculation so a valid volume ratio never degrades to
+                # N/A merely because the realtime provider omitted it.
+                snapshot = getattr(result, "market_snapshot", None)
+                if isinstance(snapshot, dict):
+                    snapshot["volume_ratio"] = volume_dashboard.get("volume_ratio")
+                    quote_turnover = None
+                    if realtime_quote is not None:
+                        quote = realtime_quote if isinstance(realtime_quote, dict) else (
+                            realtime_quote.to_dict() if hasattr(realtime_quote, "to_dict") else {}
+                        )
+                        quote_turnover = quote.get("turnover_rate")
+                        # A provider may expose market cap but not a pre-made
+                        # turnover field.  This is the total-shares formula,
+                        # not a free-float approximation, and is labelled as
+                        # such in the rendered report.
+                        if _is_value_placeholder(quote_turnover):
+                            try:
+                                quote_price = float(quote.get("price"))
+                                quote_volume = float(quote.get("volume"))
+                                market_cap = float(quote.get("total_mv"))
+                                if quote_price > 0 and quote_volume >= 0 and market_cap > 0:
+                                    quote_turnover = quote_volume * quote_price / market_cap * 100
+                                    snapshot["turnover_rate_note"] = "（總股本口徑）"
+                            except (TypeError, ValueError, ZeroDivisionError):
+                                pass
+                    if not _is_value_placeholder(quote_turnover):
+                        try:
+                            snapshot["turnover_rate"] = f"{float(quote_turnover):.2f}%"
+                        except (TypeError, ValueError):
+                            pass
+                    elif _is_value_placeholder(snapshot.get("turnover_rate")):
+                        # Do not print a fake turnover figure.  The renderer
+                        # omits this column until a provider has verified
+                        # shares outstanding / free float.
+                        snapshot.pop("turnover_rate", None)
     except Exception as e:
         logger.warning("[price_position] Fill failed, skipping: %s", e)
 
@@ -4600,11 +4637,22 @@ SEPA 證據：{trend.get("technical_evidence", {})}
         quote_price = realtime.get('price') if realtime else close
         quote_volume_ratio = realtime.get('volume_ratio') if realtime else daily_volume_ratio
         quote_turnover = realtime.get('turnover_rate') if realtime else None
+        turnover_note = ""
+        if _is_value_placeholder(quote_turnover) and realtime:
+            try:
+                quote_turnover = (
+                    float(realtime.get('volume')) * float(realtime.get('price'))
+                    / float(realtime.get('total_mv')) * 100
+                )
+                turnover_note = "（總股本口徑）"
+            except (TypeError, ValueError, ZeroDivisionError):
+                quote_turnover = None
         snapshot.update({
             "price": self._format_price(quote_price),
             "volume_ratio": quote_volume_ratio if not _is_value_placeholder(quote_volume_ratio) else "未提供（不納入判定）",
             "turnover_rate": self._format_percent(quote_turnover)
             if not _is_value_placeholder(quote_turnover) else "未提供（不納入判定）",
+            "turnover_rate_note": turnover_note,
             "source": getattr(realtime.get('source'), 'value', realtime.get('source', None))
             if realtime else "日線收盤資料",
         })

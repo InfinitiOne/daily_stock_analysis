@@ -2005,6 +2005,12 @@ class DataFetcherManager:
             market_label = "日股" if is_jp else "韩股" if is_kr else "台股"
             primary_source = "FugleFetcher" if is_tw else "YfinanceFetcher"
             quote = self._try_fetcher_quote(stock_code, primary_source)
+            if quote is not None and is_tw:
+                # Fugle is the preferred Taiwan quote, but it does not
+                # publish a turnover percentage.  Yahoo's market cap lets us
+                # fill a clearly labelled total-shares turnover calculation
+                # without replacing Fugle's price/volume fields.
+                quote = self._supplement_quote(stock_code, quote, "YfinanceFetcher")
             if quote is None and is_tw:
                 quote = self._try_fetcher_quote(stock_code, "YfinanceFetcher")
                 primary_source = "YfinanceFetcher"
@@ -2776,6 +2782,7 @@ class DataFetcherManager:
                         self._record_main_index_source_status(region, fetcher.name, "failed", "未回傳核心指數")
                     continue
                 usable = 0
+                contributed = False
                 usable_codes: set[str] = set()
                 for item in data:
                     if not isinstance(item, dict):
@@ -2784,11 +2791,36 @@ class DataFetcherManager:
                     current = item.get("current")
                     if not code or current is None:
                         continue
-                    # Keep the first usable value: the Taiwan/US preferred
-                    # list puts the official public source before aggregators.
+                    # Keep the first provider's *authoritative* values, but
+                    # merge complementary fields from later public routes.
+                    # TWSE MI_INDEX, for example, publishes the Taiwan
+                    # weighted close but not day OHLC; Yahoo's historical bar
+                    # can legitimately complete those fields.  Treating the
+                    # first partial object as terminal was the reason daily
+                    # reports printed N/A for TWII open/high/low/amplitude.
                     if code not in merged:
-                        merged[code] = item
+                        merged[code] = dict(item)
                         usable += 1
+                    else:
+                        primary = merged[code]
+                        for field in (
+                            "open", "high", "low", "prev_close", "volume",
+                            "amount", "amplitude", "change", "change_pct",
+                        ):
+                            existing = primary.get(field)
+                            candidate = item.get(field)
+                            existing_missing = existing is None or (
+                                field == "amount" and existing == 0
+                            )
+                            candidate_usable = candidate is not None and not (
+                                field == "amount" and candidate == 0
+                            )
+                            if existing_missing and candidate_usable:
+                                primary[field] = candidate
+                                contributed = True
+                                source_fields = dict(primary.get("source_fields") or {})
+                                source_fields[field] = fetcher.name
+                                primary["source_fields"] = source_fields
                     usable_codes.add(code)
                 if fetcher.name == "TwseTpexFetcher":
                     self._record_main_index_source_status(
@@ -2803,12 +2835,15 @@ class DataFetcherManager:
                         "success" if "TWOII" in usable_codes else "failed",
                         "取得 TWOII" if "TWOII" in usable_codes else "未回傳 TWOII",
                     )
-                elif usable:
+                elif usable or contributed:
                     self._record_main_index_source_status(
                         region,
                         fetcher.name,
                         "success",
-                        "取得 " + ", ".join(sorted(usable_codes)),
+                        (
+                            "取得 " + ", ".join(sorted(usable_codes))
+                            if usable else "補齊 " + ", ".join(sorted(usable_codes)) + " 欄位"
+                        ),
                     )
                 else:
                     self._record_main_index_source_status(
@@ -2817,13 +2852,19 @@ class DataFetcherManager:
                         "failed",
                         "未回傳可用核心指數",
                     )
-                if usable:
+                if usable or contributed:
                     sources.append(fetcher.name)
-                    logger.info("[%s] 获取指数行情成功 count=%d", fetcher.name, usable)
+                    logger.info(
+                        "[%s] 获取指数行情成功 count=%d supplemented=%s",
+                        fetcher.name,
+                        usable,
+                        contributed,
+                    )
                     if not target_required:
                         return list(merged.values()), fetcher.name
-                    if target_required.issubset(set(merged)):
-                        return list(merged.values()), " + ".join(sources)
+                    # Do not return as soon as the required codes exist for
+                    # TW/US.  Subsequent sources may supply missing OHLC or
+                    # liquidity fields for the same index code.
             except Exception as e:
                 logger.warning(f"[{fetcher.name}] 获取指数行情失败: {e}")
                 if fetcher.name == "TwseTpexFetcher":
@@ -2908,6 +2949,33 @@ class DataFetcherManager:
                 continue
         logger.warning("[MarketStats] component=market_stats action=complete status=empty purpose=%s", purpose)
         return {}
+
+    def get_taiwan_market_breadth(self) -> Dict[str, Any]:
+        """Fetch official TWSE/TPEx end-of-day breadth for a Taiwan review."""
+        fetcher = self._get_fetcher_by_name("TwseTpexFetcher", capability="market_breadth")
+        if fetcher is None or not hasattr(fetcher, "get_market_breadth"):
+            return {}
+        try:
+            data = self._call_fetcher_method(fetcher, "get_market_breadth")
+            return data if isinstance(data, dict) else {}
+        except Exception as exc:
+            logger.warning("[TaiwanBreadth] official breadth fetch failed: %s", exc)
+            return {}
+
+    def get_taiwan_market_institutional_net(self, date: Optional[str] = None) -> Dict[str, Any]:
+        """Fetch official aggregate three-institution net flow, fail-open."""
+        try:
+            from data_provider.tw_institutional_fetcher import TwInstitutionalFetcher
+
+            fetcher = getattr(self, "_tw_institutional_fetcher", None)
+            if fetcher is None:
+                fetcher = TwInstitutionalFetcher()
+                self._tw_institutional_fetcher = fetcher
+            data = fetcher.get_market_institutional_net(date=date)
+            return data if isinstance(data, dict) else {}
+        except Exception as exc:
+            logger.warning("[TaiwanInstitutional] aggregate flow fetch failed: %s", exc)
+            return {}
 
     def _run_with_timeout(
         self,
@@ -3332,7 +3400,17 @@ class DataFetcherManager:
             if mops_earnings:
                 combined_earnings = dict(earnings_payload)
                 for key, value in mops_earnings.items():
-                    if value is not None:
+                    if isinstance(value, dict) and isinstance(combined_earnings.get(key), dict):
+                        # MOPS publishes statutory Taiwan values but not every
+                        # cash-flow field.  Merge field-by-field so an
+                        # available yfinance operating cash-flow figure is
+                        # not discarded when official revenue/net income wins.
+                        merged_report = dict(combined_earnings[key])
+                        for nested_key, nested_value in value.items():
+                            if nested_value is not None:
+                                merged_report[nested_key] = nested_value
+                        combined_earnings[key] = merged_report
+                    elif value is not None:
                         combined_earnings[key] = value
                 earnings_payload = combined_earnings
             if mops_boards:

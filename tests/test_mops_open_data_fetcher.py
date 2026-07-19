@@ -66,6 +66,9 @@ def test_mops_fills_official_company_revenue_and_financial_fields() -> None:
     assert bundle["status"] == "partial"
     assert bundle["growth"]["monthly_revenue"]["monthly_revenue_yoy_pct"] == 40.1
     assert bundle["earnings"]["financial_report"]["basic_eps"] == 12.34
+    assert bundle["earnings"]["financial_report"]["report_date"] == "2026-Q1"
+    assert bundle["earnings"]["financial_report"]["revenue"] == 839254000000.0
+    assert bundle["earnings"]["financial_report"]["net_profit_parent"] == 300000000000.0
     assert bundle["source_chain"][0]["provider"] == "MOPS Open Data（TWSE OpenAPI）"
 
 

@@ -384,10 +384,12 @@ class StockAnalysisPipeline:
             return result
 
         language = normalize_report_language(report_language)
-        limitation = "LLM 文字摘要未取得（JSON 格式驗證失敗）；已保留規則化技術判定。"
         evidence = dict(getattr(trend_result, "technical_evidence", {}) or {})
         evidence["llm_status"] = "schema_validation_failed"
-        evidence["llm_reason"] = limitation
+        # The provider error remains diagnostic-only.  A user-facing report
+        # must contain the verified deterministic analysis, not repeat an
+        # implementation failure in every risk/confidence/data-limit block.
+        evidence["llm_reason"] = "structured_response_rejected"
         score = getattr(trend_result, "signal_score", None)
         trend_value = getattr(getattr(trend_result, "trend_status", None), "value", "未取得／暫停判定")
         current_price = getattr(trend_result, "current_price", None)
@@ -405,6 +407,13 @@ class StockAnalysisPipeline:
             except (TypeError, ValueError):
                 return "—"
 
+        def _numeric_or_none(value: Any) -> Optional[float]:
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                return None
+            return number if number == number and number > 0 else None
+
         setup_summary = str(evidence.get("setup_summary") or "規則化技術條件已計算。")
         rule_summary = (
             f"規則化技術結論：{trend_value}；現價 {_number(current_price)}，"
@@ -414,7 +423,42 @@ class StockAnalysisPipeline:
             f"收盤有效站上 {_number(resistance)} 且量能確認後，才評估進場；"
             f"跌破 {_number(support)} 則降低曝險。"
             if support is not None and resistance is not None
-            else "等待價格與量能同步確認，不因 LLM 格式失敗調整部位。"
+            else "等待價格與量能同步確認；未形成結構停損前不新增部位。"
+        )
+        pivot = _numeric_or_none(evidence.get("pivot_price")) or _numeric_or_none(evidence.get("pivot")) or _numeric_or_none(resistance)
+        structural_stop = _numeric_or_none(evidence.get("structural_stop")) or _numeric_or_none(support)
+        volume_multiple = _numeric_or_none(evidence.get("pivot_volume_ratio"))
+        volume_requirement = "量比至少 1.4" if volume_multiple is None else f"量比至少 {volume_multiple:.2f}"
+        entry_plan = (
+            f"突破 {_number(pivot)} 並且{volume_requirement}時，分兩批評估進場；"
+            f"若回測 {_number(support)} 守穩，才考慮第二批。"
+            if pivot is not None and support is not None
+            else action_condition
+        )
+        risk_control = (
+            f"以 {_number(structural_stop)} 為結構停損；收盤跌破即停止加碼並重新評估。"
+            if structural_stop is not None
+            else "未形成可驗證的結構停損前，維持觀察，不新增部位。"
+        )
+        history_bars = evidence.get("history_bars")
+        limited_history = evidence.get("data_status") == "limited_history"
+        confidence_reason = (
+            f"以已驗證的 {history_bars} 根日線、均線、量價與支撐壓力計算。"
+            if history_bars
+            else "以已驗證日線、均線、量價與支撐壓力計算。"
+        )
+        if limited_history and history_bars:
+            data_limitations = [
+                f"目前僅有 {history_bars} 根日線；長週期 SEPA／Stage／VCP／Pivot 不適用。"
+            ]
+        elif limited_history:
+            data_limitations = ["日線歷史不足；長週期 SEPA／Stage／VCP／Pivot 不適用。"]
+        else:
+            data_limitations = []
+        technical_risk = (
+            f"若收盤跌破 {_number(structural_stop)}，原有技術結構失效。"
+            if structural_stop is not None
+            else "尚未形成可驗證的長週期結構，避免依單日波動追價。"
         )
         result.sentiment_score = score
         result.trend_prediction = trend_value
@@ -424,18 +468,15 @@ class StockAnalysisPipeline:
         result.action_label = "觀察"
         result.confidence_level = localize_confidence_level("低", language)
         result.analysis_summary = rule_summary
-        result.key_points = (
-            "核心日線與規則化技術指標可用；"
-            "不採用未通過格式驗證的 LLM 內容。"
-        )
-        result.risk_warning = f"{limitation} {action_condition}"
-        result.buy_reason = action_condition
+        result.key_points = "核心日線、均線、量價與支撐壓力均以規則化資料計算。"
+        result.risk_warning = f"{technical_risk} {risk_control}"
+        result.buy_reason = entry_plan
         result.dashboard = {
             "core_conclusion": {
                 "one_sentence": rule_summary,
                 "signal_type": "規則化技術判定",
-                "time_sensitivity": "待 LLM 服務恢復結構化輸出後更新",
-                "position_advice": {"no_position": action_condition, "has_position": f"依支撐 {_number(support)} 管理風險。"},
+                "time_sensitivity": "以最近交易日日線為準；下一交易日收盤後更新。",
+                "position_advice": {"no_position": entry_plan, "has_position": risk_control},
             },
             "data_perspective": {
                 "price_position": {
@@ -452,30 +493,33 @@ class StockAnalysisPipeline:
                     "trend_score": score,
                 }
             },
-            "intelligence": {"risk_alerts": [limitation], "positive_catalysts": []},
+            "intelligence": {"risk_alerts": [technical_risk], "positive_catalysts": []},
             "battle_plan": {
-                # No price target is invented after an LLM schema failure.
-                # The deterministic MA / support / resistance panel remains
-                # available below; a no-trade stance is explicit here.
+                "sniper_points": {
+                    "ideal_buy": pivot,
+                    "secondary_buy": support,
+                    "stop_loss": structural_stop,
+                    "take_profit": evidence.get("buy_zone_high"),
+                },
                 "position_strategy": {
                     "suggested_position": "觀察",
-                    "entry_plan": action_condition,
-                    "risk_control": f"不因 LLM 格式失敗新增、減碼或賣出部位；跌破 {_number(support)} 時重新檢查。",
+                    "entry_plan": entry_plan,
+                    "risk_control": risk_control,
                 },
             },
             "phase_decision": {
                 "phase_context": {"phase": "rule_based_only"},
                 "action_window": "觀察",
                 "immediate_action": "觀察",
-                "watch_conditions": [action_condition],
+                "watch_conditions": [entry_plan, risk_control],
                 "next_check_time": "下次報告",
-                "confidence_reason": limitation,
-                "data_limitations": [limitation],
+                "confidence_reason": confidence_reason,
+                "data_limitations": data_limitations,
             },
         }
         result.technical_evidence = evidence
         result.data_status = "available"
-        result.data_missing_reasons = list(getattr(result, "data_missing_reasons", []) or []) + [limitation]
+        result.data_missing_reasons = list(getattr(result, "data_missing_reasons", []) or [])
         result.success = True
         result.error_message = None
         logger.warning("[%s] LLM JSON 驗證失敗；以規則化技術結果繼續週報完整性檢查", result.code)

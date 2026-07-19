@@ -48,3 +48,28 @@ def test_twse_index_survives_tpex_endpoint_failure() -> None:
     assert result is not None
     assert [item["code"] for item in result] == ["TWII"]
     assert result[0]["current"] == 23000.25
+
+
+def test_official_taiwan_market_breadth_aggregates_two_exchanges() -> None:
+    fetcher = TwseTpexFetcher()
+
+    def fake_get(url: str, **_kwargs):
+        if "STOCK_DAY_ALL" in url:
+            return [
+                {"Date": "20260717", "Change": "+2.0", "TradeValue": "100000000"},
+                {"Date": "20260717", "Change": "-1.0", "TradeValue": "250000000"},
+            ]
+        return [
+            {"Date": "115/07/17", "Change": "0", "TransactionAmount": "300000000"},
+            {"Date": "115/07/17", "Change": "+0.5", "TransactionAmount": "400000000"},
+        ]
+
+    fetcher._get_json_or_list = fake_get  # type: ignore[method-assign]
+    result = fetcher.get_market_breadth()
+
+    assert result is not None
+    assert result["up_count"] == 2
+    assert result["down_count"] == 1
+    assert result["flat_count"] == 1
+    assert result["coverage"] == 4
+    assert result["total_amount"] == 1_050_000_000.0

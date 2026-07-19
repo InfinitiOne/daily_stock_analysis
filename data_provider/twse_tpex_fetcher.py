@@ -300,6 +300,80 @@ class TwseTpexFetcher(BaseFetcher):
                 )
         return result or None
 
+    def get_market_breadth(self) -> Optional[dict[str, Any]]:
+        """Aggregate Taiwan exchange breadth from official end-of-day rows.
+
+        This is deliberately an EOD market-structure feed, not a fabricated
+        intraday estimate.  It combines TWSE ``STOCK_DAY_ALL`` and TPEx daily
+        close quotes, returning only fields that can be calculated from the
+        published rows.
+        """
+        try:
+            twse_rows = self._get_json_or_list(f"{_TWSE_OPEN_API}/exchangeReport/STOCK_DAY_ALL")
+            tpex_rows = self._get_json_or_list(f"{_TPEX_OPEN_API}/tpex_mainboard_daily_close_quotes")
+        except DataFetchError as exc:
+            logger.warning("[TWSE/TPEx] market breadth unavailable: %s", exc)
+            return None
+
+        up = down = flat = 0
+        amount = 0.0
+        valid_rows = 0
+        dates: list[str] = []
+
+        def consume(rows: Any, *, change_keys: tuple[str, ...], amount_keys: tuple[str, ...], date_key: str) -> None:
+            nonlocal up, down, flat, amount, valid_rows
+            if not isinstance(rows, list):
+                return
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                change = None
+                for key in change_keys:
+                    change = _number(row.get(key))
+                    if change is not None:
+                        break
+                if change is None:
+                    continue
+                valid_rows += 1
+                if change > 0:
+                    up += 1
+                elif change < 0:
+                    down += 1
+                else:
+                    flat += 1
+                for key in amount_keys:
+                    value = _number(row.get(key))
+                    if value is not None and value >= 0:
+                        amount += value
+                        break
+                row_date = str(row.get(date_key) or "").strip()
+                if row_date:
+                    dates.append(row_date)
+
+        consume(
+            twse_rows,
+            change_keys=("Change", "漲跌價差", "漲跌"),
+            amount_keys=("TradeValue", "成交金額"),
+            date_key="Date",
+        )
+        consume(
+            tpex_rows,
+            change_keys=("Change", "漲跌"),
+            amount_keys=("TransactionAmount", "成交金額"),
+            date_key="Date",
+        )
+        if not valid_rows:
+            return None
+        return {
+            "up_count": up,
+            "down_count": down,
+            "flat_count": flat,
+            "total_amount": amount,
+            "source": "TWSE STOCK_DAY_ALL + TPEx daily close quotes",
+            "as_of": max(dates) if dates else None,
+            "coverage": valid_rows,
+        }
+
     def _fetch_twse_month(self, base: str, month: date) -> list[dict[str, Any]]:
         payload = self._get_json(
             _TWSE_STOCK_DAY,
