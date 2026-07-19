@@ -1059,7 +1059,13 @@ def fill_price_position_if_needed(
                 "turnover_rate": "未提供（不納入判定）",
             }
             for key, value in volume_computed.items():
-                if _is_value_placeholder(volume_dashboard.get(key)) and not _is_value_placeholder(value):
+                # Deterministic OHLCV values take precedence over an LLM
+                # placeholder or contradictory prose such as "1.12 (volume
+                # ratio unavailable)".  This is display data, not an LLM
+                # opinion, so the verified calculation is authoritative.
+                if key == "volume_ratio" and not _is_value_placeholder(value):
+                    volume_dashboard[key] = value
+                elif _is_value_placeholder(volume_dashboard.get(key)) and not _is_value_placeholder(value):
                     volume_dashboard[key] = value
             if volume_dashboard:
                 dp["volume_analysis"] = volume_dashboard
@@ -2554,9 +2560,9 @@ class GeminiAnalyzer:
         }.get(lang, "所有面向使用者的文字值使用繁體中文與臺灣投資用語，禁止簡體中文。")
         return f"""你是 JEAC Enterprise 5.0 投資決策分析師。{market_role}
 
-只使用輸入中提供且有日期、來源或狀態的證據；資料缺失時明確寫「未取得／暫停判定」，不得補造價格、法人、財報、新聞、目標價或公司名稱。
+只使用輸入中提供且有日期、來源或狀態的證據；不得補造價格、法人、財報、新聞、目標價或公司名稱。使用者報告中，沒有證據的欄位直接省略；只有會影響結論的限制，才用一句「資料範圍」說明，不得反覆輸出「未取得／暫停判定」。
 採用 Mark Minervini 的趨勢模板／SEPA：先確認市場環境與 Stage，再確認多頭均線、波動收斂、樞紐帶量突破及風險報酬。只在資料已驗證時才宣告 Stage 2、SEPA、VCP 或 Pivot；所有操作建議必須包含觸發條件、失效條件與風險控制。禁止向下攤平，也不得在偏離 MA5 超過 5% 時追價。
-SEPA、Stage 2、VCP、Pivot 只能依據 `technical_evidence.data_status=available` 的資料判斷。若狀態為 `limited_history`，代表日線有效但上市歷史較短：必須標示上述長期指標為「未取得／暫停判定」，但仍應依據已提供的 MA5／MA10／MA20、量價、MACD、RSI、短期高低點與規則化評分完成短期分析，並寫明日線根數；不得把歷史不足轉換成 0 分、賣出或看空。
+SEPA、Stage 2、VCP、Pivot 只能依據 `technical_evidence.data_status=available` 的資料判斷。若狀態為 `limited_history`，代表日線有效但上市歷史較短：報告要寫「短歷史標的，長週期模板尚不適用」並列出日線根數；仍須依據已提供的 MA5／MA10／MA20、量價、MACD、RSI、短期高低點與規則化評分完成短期分析。不得把歷史不足轉換成 0 分、賣出或看空，也不得把四個長期欄位逐一列為缺失。
 先判斷趨勢／Stage、價格位置、量價與風險報酬；台股有法人或營收資料時才引用。分數不等於買入：風險報酬低於 2、停損過遠、資料不完整或關鍵條件未確認時，動作必須為 watch/hold/avoid。
 輸出只能是一個有效 JSON 物件，不要 Markdown。保留輸入事實，不復述 raw payload、token 或金鑰。
 {market_guidelines}
@@ -3920,10 +3926,13 @@ JSON 鍵名保持英文；decision_type 只能為 buy|hold|sell；{language_rule
         compact_pack = (analysis_context_pack_summary or "").strip()[:1200]
         compact_news = (news_context or "").strip()[:1600]
         data_status = "partial/missing" if context.get("data_missing") else "available"
-        market_summary = str(daily_market_context.get("summary") or "未取得／暫停判定").strip()
+        market_summary = str(
+            daily_market_context.get("summary")
+            or "（本輪未提供大盤摘要；不必在報告中重複提及。）"
+        ).strip()
         institution = fundamental_context.get("institution") if isinstance(fundamental_context.get("institution"), dict) else {}
         institution_data = institution.get("data") if isinstance(institution.get("data"), dict) else {}
-        institution_section = "未取得／暫停判定"
+        institution_section = "（本輪未提供法人資料；不必在報告中重複提及。）"
         if institution.get("status") == "ok" and institution_data:
             institution_section = (
                 "三大法人動向（籌碼過濾器）："
@@ -3940,7 +3949,7 @@ JSON 鍵名保持英文；decision_type 只能為 buy|hold|sell；{language_rule
 
 行情：收盤={today.get("close", "N/A")}；漲跌={today.get("pct_chg", "N/A")}%；量={self._format_volume(today.get("volume"))}
 技術面資料：MA5={today.get("ma5", "N/A")}；MA10={today.get("ma10", "N/A")}；MA20={today.get("ma20", "N/A")}；趨勢={trend.get("trend_status", "N/A")}；均線={trend.get("ma_alignment", context.get("ma_status", "N/A"))}；訊號={trend.get("buy_signal", "N/A")}；評分={trend.get("signal_score", "N/A")}
-SEPA 證據：{trend.get("technical_evidence", "未取得／暫停判定")}
+SEPA 證據：{trend.get("technical_evidence", {})}
 即時資料：價格={realtime.get("price", "N/A")}；量比={realtime.get("volume_ratio", "N/A")}；換手={realtime.get("turnover_rate", "N/A")}
 {institution_section}
 
@@ -3950,7 +3959,7 @@ SEPA 證據：{trend.get("technical_evidence", "未取得／暫停判定")}
 近期消息：
 {compact_news or "無可用近期新聞。"}
 
-只輸出下列 JSON（缺失資料使用「未取得／暫停判定」，無法驗證的價格點位填「N/A」；不可把缺失資料轉成 0 分或賣出）：
+只輸出下列 JSON。沒有證據的文字欄位填空字串、清單填 []、無法驗證的價格欄位填 null；不得輸出「未取得／暫停判定」「未找到相關資訊」或以缺失資料推導買賣點，也不可把缺失資料轉成 0 分或賣出：
 {{
   "stock_name": "{stock_name}",
   "sentiment_score": null,
