@@ -2521,6 +2521,18 @@ class DataFetcherManager:
                 logger.info(f"[股票名称] 从实时行情获取: {stock_code} -> {name}")
                 return name
 
+        # Taiwan symbols are resolved from the maintained stock index first
+        # (which is refreshed from TWSE/TPEx before scheduled analysis).  Do
+        # not let a missing index entry fall through to Pytdx/Baostock: those
+        # are China-market sources, reject .TW/.TWO codes, and their retries
+        # can add minutes to a weekly report without improving the result.
+        if _market_tag(stock_code) == "tw":
+            logger.info(
+                "[股票名稱] 台股 %s 未於本地索引或即時行情取得名稱；略過非台股資料源",
+                stock_code,
+            )
+            return ""
+
         # 3. 依次尝试各个数据源
         from .akshare_fetcher import _is_us_code
         is_us = _is_us_code(stock_code)

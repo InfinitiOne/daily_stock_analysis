@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [修復] 新上市 ETF 日線有效但不足 252 根時，仍產出短期均線、量價、MACD、RSI 與規則化趨勢分析；僅將 SEPA、Stage 2、VCP、Pivot 標示為歷史不足而暫停。
+- [修復] 週報將新上市 ETF 的有效但不足日線歷史標示為長週期技術暫停，不再阻斷整份私有文件；LLM JSON 格式失敗時保留規則化技術資料。
+- [修復] 台股名稱查詢命中本地索引或即時行情失敗後，不再回退到 Pytdx／Baostock 等中國市場資料源。
 - [修复] 桌面与 Docker 发布显式安装 `orjson`，桌面 PyInstaller 产物同时冻结并执行运行时导入探针，避免 LiteLLM 调用时报 `No module named 'orjson'`。
 - [改进] 个股报告不再单独展示“题材主线与个股位置”卡片，相关市场结构数据仍保留在分析上下文、模型 Prompt 与决策信号提取链路中。
 - [改进] 通知推送与完整 Markdown/微信报告不再重复附加“AI 决策信号”摘要，DecisionSignal 的存储、告警和 Web AI 建议页保持不变。
