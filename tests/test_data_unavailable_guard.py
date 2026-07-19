@@ -2,9 +2,15 @@
 
 import pandas as pd
 
-from src.analyzer import AnalysisResult, apply_placeholder_fill, build_data_unavailable_result, check_content_integrity
+from src.analyzer import (
+    AnalysisResult,
+    apply_placeholder_fill,
+    build_data_unavailable_result,
+    check_content_integrity,
+    fill_price_position_if_needed,
+)
 from src.core.pipeline import StockAnalysisPipeline
-from src.stock_analyzer import BuySignal, StockTrendAnalyzer, TrendAnalysisResult
+from src.stock_analyzer import BuySignal, StockTrendAnalyzer, TrendAnalysisResult, TrendStatus, VolumeStatus
 
 
 def test_core_data_unavailable_is_not_scored_or_marked_for_sale() -> None:
@@ -56,6 +62,9 @@ def test_new_listing_history_is_limited_not_unavailable() -> None:
     assert evidence["short_term_analysis_available"] is True
     assert evidence["short_term_lookback_bars"] == 20
     assert evidence["ma5"] == 10.0
+    assert evidence["short_term_support"] == 9.8
+    assert evidence["short_term_resistance"] == 10.2
+    assert evidence["volume_ratio_5d"] == 1.0
     assert "可進行短期趨勢" in evidence["reason"]
 
 
@@ -88,3 +97,50 @@ def test_llm_schema_failure_preserves_rule_based_core_data_for_weekly_integrity(
     assert result.operation_advice == "觀察"
     assert result.decision_type == "hold"
     assert result.technical_evidence["llm_status"] == "schema_validation_failed"
+
+
+def test_schema_validation_failed_marker_also_preserves_rule_based_result() -> None:
+    failed = AnalysisResult(
+        code="00403A.TW",
+        name="主動統一升級50",
+        sentiment_score=13,
+        trend_prediction="強勢空頭",
+        operation_advice="賣出",
+        success=False,
+        error_message="GenerationError: schema_validation_failed",
+    )
+    trend = TrendAnalysisResult(
+        code="00403A.TW",
+        signal_score=13,
+        current_price=10.12,
+        ma5=10.05,
+        ma10=10.0,
+        ma20=9.95,
+        bias_ma5=0.7,
+        trend_status=TrendStatus.STRONG_BEAR,
+        volume_status=VolumeStatus.NORMAL,
+        volume_ratio_5d=1.12,
+        volume_trend="量能正常",
+        technical_evidence={
+            "data_status": "limited_history",
+            "short_term_support": 9.8,
+            "short_term_resistance": 10.4,
+        },
+    )
+    pipeline = StockAnalysisPipeline.__new__(StockAnalysisPipeline)
+
+    result = pipeline._preserve_rule_based_result_after_llm_schema_failure(
+        failed,
+        trend_result=trend,
+        report_language="zh-TW",
+    )
+    fill_price_position_if_needed(result, trend)
+
+    assert result.success is True
+    assert result.operation_advice == "觀察"
+    assert result.action == "watch"
+    assert "sniper_points" not in result.dashboard["battle_plan"]
+    perspective = result.dashboard["data_perspective"]
+    assert perspective["price_position"]["support_level"] == 9.8
+    assert perspective["price_position"]["resistance_level"] == 10.4
+    assert perspective["volume_analysis"]["volume_ratio"] == 1.12

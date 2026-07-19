@@ -959,7 +959,13 @@ def fill_price_position_if_needed(
     trend_result: Any = None,
     realtime_quote: Any = None,
 ) -> None:
-    """Fill missing price_position fields from trend_result / realtime data (in-place)."""
+    """Fill dashboard technical fields from obtained OHLCV (in-place).
+
+    The LLM is allowed to add interpretation, but it must not be the only
+    source for deterministic values such as MA, short-term support/resistance,
+    or a five-day volume ratio.  This also keeps a valid short-history ETF
+    useful when long-history SEPA fields are intentionally paused.
+    """
     if not result:
         return
     try:
@@ -969,8 +975,11 @@ def fill_price_position_if_needed(
         dp = dash.get("data_perspective") or {}
         dash["data_perspective"] = dp
         pp = dp.get("price_position") or {}
+        trend_dashboard = dp.get("trend_status") or {}
+        volume_dashboard = dp.get("volume_analysis") or {}
 
         computed: Dict[str, Any] = {}
+        evidence: Dict[str, Any] = {}
         if trend_result:
             tr = trend_result if isinstance(trend_result, dict) else (
                 trend_result.__dict__ if hasattr(trend_result, "__dict__") else {}
@@ -982,10 +991,26 @@ def fill_price_position_if_needed(
             computed["current_price"] = tr.get("current_price")
             support_levels = tr.get("support_levels") or []
             resistance_levels = tr.get("resistance_levels") or []
+            evidence = tr.get("technical_evidence") or {}
             if support_levels:
                 computed["support_level"] = support_levels[0]
             if resistance_levels:
                 computed["resistance_level"] = resistance_levels[0]
+            if _is_value_placeholder(computed.get("support_level")):
+                computed["support_level"] = evidence.get("short_term_support")
+            if _is_value_placeholder(computed.get("resistance_level")):
+                computed["resistance_level"] = evidence.get("short_term_resistance")
+            if _is_value_placeholder(computed.get("bias_status")):
+                bias = computed.get("bias_ma5")
+                try:
+                    bias_value = float(bias)
+                    computed["bias_status"] = (
+                        "偏離偏高" if bias_value >= 5 else
+                        "偏離偏低" if bias_value <= -5 else
+                        "正常區間"
+                    )
+                except (TypeError, ValueError):
+                    pass
         if realtime_quote:
             rq = realtime_quote if isinstance(realtime_quote, dict) else (
                 realtime_quote.to_dict() if hasattr(realtime_quote, "to_dict") else {}
@@ -1001,6 +1026,43 @@ def fill_price_position_if_needed(
         if filled:
             dp["price_position"] = pp
             logger.info("[price_position] Filled placeholder fields from computed data")
+
+        if trend_result:
+            tr = trend_result if isinstance(trend_result, dict) else (
+                trend_result.__dict__ if hasattr(trend_result, "__dict__") else {}
+            )
+            trend_status = tr.get("trend_status")
+            volume_status = tr.get("volume_status")
+            trend_value = getattr(trend_status, "value", trend_status)
+            volume_value = getattr(volume_status, "value", volume_status)
+            trend_computed = {
+                "ma_alignment": tr.get("ma_alignment"),
+                "trend_score": tr.get("trend_strength") or tr.get("signal_score"),
+                "is_bullish": str(trend_value or "").endswith(("多頭", "bull")),
+            }
+            for key, value in trend_computed.items():
+                if _is_value_placeholder(trend_dashboard.get(key)) and not _is_value_placeholder(value):
+                    trend_dashboard[key] = value
+            if trend_dashboard:
+                dp["trend_status"] = trend_dashboard
+
+            volume_ratio = tr.get("volume_ratio_5d")
+            if _is_value_placeholder(volume_ratio):
+                volume_ratio = evidence.get("volume_ratio_5d")
+            volume_computed = {
+                "volume_ratio": round(float(volume_ratio), 2)
+                if not _is_value_placeholder(volume_ratio) else "未提供（不納入判定）",
+                "volume_status": volume_value or "未提供（不納入判定）",
+                "volume_meaning": tr.get("volume_trend") or "未提供（不納入判定）",
+                # Turnover requires a verified share-count source.  Do not
+                # manufacture it from daily OHLCV; make the exclusion explicit.
+                "turnover_rate": "未提供（不納入判定）",
+            }
+            for key, value in volume_computed.items():
+                if _is_value_placeholder(volume_dashboard.get(key)) and not _is_value_placeholder(value):
+                    volume_dashboard[key] = value
+            if volume_dashboard:
+                dp["volume_analysis"] = volume_dashboard
     except Exception as e:
         logger.warning("[price_position] Fill failed, skipping: %s", e)
 
@@ -4467,6 +4529,17 @@ SEPA证据：{trend.get("technical_evidence", "未取得／暫停判定")}
             except (TypeError, ValueError):
                 change_amount = None
 
+        amount = today.get('amount')
+        amount_estimated = False
+        if _is_value_placeholder(amount):
+            try:
+                if close is not None and today.get('volume') is not None:
+                    amount = float(close) * float(today.get('volume'))
+                    amount_estimated = True
+            except (TypeError, ValueError):
+                amount = None
+
+        daily_volume_ratio = today.get('volume_ratio')
         snapshot = {
             "date": context.get('date', '未知'),
             "close": self._format_price(close),
@@ -4478,16 +4551,24 @@ SEPA证据：{trend.get("technical_evidence", "未取得／暫停判定")}
             "change_amount": self._format_price(change_amount),
             "amplitude": self._format_percent(amplitude),
             "volume": self._format_volume(today.get('volume')),
-            "amount": self._format_amount(today.get('amount')),
+            "amount": self._format_amount(amount),
+            "amount_note": "以收盤價 × 成交量估算" if amount_estimated else "",
         }
 
-        if realtime:
-            snapshot.update({
-                "price": self._format_price(realtime.get('price')),
-                "volume_ratio": realtime.get('volume_ratio', 'N/A'),
-                "turnover_rate": self._format_percent(realtime.get('turnover_rate')),
-                "source": getattr(realtime.get('source'), 'value', realtime.get('source', 'N/A')),
-            })
+        # A historical close is still a valid quote for a scheduled report.
+        # Show it with its source when real-time fields are unavailable instead
+        # of rendering an empty secondary table.
+        quote_price = realtime.get('price') if realtime else close
+        quote_volume_ratio = realtime.get('volume_ratio') if realtime else daily_volume_ratio
+        quote_turnover = realtime.get('turnover_rate') if realtime else None
+        snapshot.update({
+            "price": self._format_price(quote_price),
+            "volume_ratio": quote_volume_ratio if not _is_value_placeholder(quote_volume_ratio) else "未提供（不納入判定）",
+            "turnover_rate": self._format_percent(quote_turnover)
+            if not _is_value_placeholder(quote_turnover) else "未提供（不納入判定）",
+            "source": getattr(realtime.get('source'), 'value', realtime.get('source', None))
+            if realtime else "日線收盤資料",
+        })
 
         return snapshot
 

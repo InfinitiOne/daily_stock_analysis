@@ -304,6 +304,10 @@ class StockTrendAnalyzer:
             latest = df.iloc[-1]
             short_lookback = min(20, history_bars)
             short_window = df.tail(short_lookback)
+            prior_volume = df["volume"].iloc[-6:-1]
+            average_volume = float(prior_volume.mean()) if not prior_volume.empty else 0.0
+            latest_volume = float(latest["volume"])
+            volume_ratio = latest_volume / average_volume if average_volume > 0 else None
             return {
                 # A newly listed ETF can have valid daily bars while lacking
                 # the full lookback required by SEPA / Stage 2.  Keep this
@@ -327,6 +331,13 @@ class StockTrendAnalyzer:
                 "ma20": round(float(latest["MA20"]), 4),
                 "short_term_high": round(float(short_window["high"].max()), 4),
                 "short_term_low": round(float(short_window["low"].min()), 4),
+                # These are deliberately labelled as short-term levels.  They
+                # are calculated from obtained OHLCV rather than inferred by
+                # the LLM, so a newly listed ETF still receives an auditable
+                # analysis without pretending it has a 52-week base.
+                "short_term_resistance": round(float(short_window["high"].max()), 4),
+                "short_term_support": round(float(short_window["low"].min()), 4),
+                "volume_ratio_5d": round(float(volume_ratio), 3) if volume_ratio is not None else None,
                 "reason": (
                     f"日線已取得 {history_bars} 根，可進行短期趨勢、均線、量價、MACD 與 RSI 分析；"
                     f"SEPA／Stage 2／VCP／Pivot 至少需要 {required_bars} 根日線，故暫停判定"
