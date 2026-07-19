@@ -1,1 +1,75 @@
-IyAtKi0gY29kaW5nOiB1dGYtOCAtKi0KIiIiUmVncmVzc2lvbiB0ZXN0cyBmb3Igb2ZmaWNpYWwgVFdTRSAvIFRQRXggZmFsbGJhY2tzLiIiIgoKZnJvbSBfX2Z1dHVyZV9fIGltcG9ydCBhbm5vdGF0aW9ucwoKZnJvbSBkYXRhX3Byb3ZpZGVyLmJhc2UgaW1wb3J0IERhdGFGZXRjaEVycm9yCmZyb20gZGF0YV9wcm92aWRlci50d3NlX3RwZXhfZmV0Y2hlciBpbXBvcnQgVHdzZVRwZXhGZXRjaGVyCgoKZGVmIHRlc3RfdHBleF9pbmRleF9zdXJ2aXZlc190d3NlX2VuZHBvaW50X2ZhaWx1cmUoKSAtPiBOb25lOgogICAgZmV0Y2hlciA9IFR3c2VUcGV4RmV0Y2hlcigpCgogICAgZGVmIGZha2VfZ2V0KHVybDogc3RyLCAqKl9rd2FyZ3MpOgogICAgICAgIGlmICJNSV9JTkRFWCIgaW4gdXJsOgogICAgICAgICAgICByYWlzZSBEYXRhRmV0Y2hFcnJvcigiVFdTRSB1bmF2YWlsYWJsZSIpCiAgICAgICAgcmV0dXJuIFsKICAgICAgICAgICAgeyJEYXRlIjogIjIwMjYtMDctMTYiLCAiQ2xvc2UiOiAiMjUwLjAwIiwgIk9wZW4iOiAiMjQ4IiwgIkhpZ2giOiAiMjUxIiwgIkxvdyI6ICIyNDcifSwKICAgICAgICAgICAgeyJEYXRlIjogIjIwMjYtMDctMTciLCAiQ2xvc2UiOiAiMjU1LjAwIiwgIk9wZW4iOiAiMjUwIiwgIkhpZ2giOiAiMjU2IiwgIkxvdyI6ICIyNDkifSwKICAgICAgICBdCgogICAgZmV0Y2hlci5fZ2V0X2pzb25fb3JfbGlzdCA9IGZha2VfZ2V0ICAjIHR5cGU6IGlnbm9yZVttZXRob2QtYXNzaWduXQogICAgcmVzdWx0ID0gZmV0Y2hlci5nZXRfbWFpbl9pbmRpY2VzKCJ0dyIpCgogICAgYXNzZXJ0IHJlc3VsdCBpcyBub3QgTm9uZQogICAgYXNzZXJ0IFtpdGVtWyJjb2RlIl0gZm9yIGl0ZW0gaW4gcmVzdWx0XSA9PSBbIlRXT0lJIl0KICAgIGFzc2VydCByZXN1bHRbMF1bImN1cnJlbnQiXSA9PSAyNTUuMAoKCmRlZiB0ZXN0X3R3c2VfaW5kZXhfc3Vydml2ZXNfdHBleF9lbmRwb2ludF9mYWlsdXJlKCkgLT4gTm9uZToKICAgIGZldGNoZXIgPSBUd3NlVHBleEZldGNoZXIoKQoKICAgIGRlZiBmYWtlX2dldCh1cmw6IHN0ciwgKipfa3dhcmdzKToKICAgICAgICBpZiAidHBleF9pbmRleCIgaW4gdXJsOgogICAgICAgICAgICByYWlzZSBEYXRhRmV0Y2hFcnJvcigiVFBFeCB1bmF2YWlsYWJsZSIpCiAgICAgICAgcmV0dXJuIFsKICAgICAgICAgICAgewogICAgICAgICAgICAgICAgIuaMh+aVuCI6ICLnmbzooYzph4/liqDmrIrogqHlg7nmjIfmlbgiLAogICAgICAgICAgICAgICAgIuaUtuebpOaMh+aVuCI6ICIyMzAwMC4yNSIsCiAgICAgICAgICAgICAgICAi5ryy6LeM6bue5pW4IjogIjEwMC41IiwKICAgICAgICAgICAgICAgICLmvLLot4znmb7liIbmr5QiOiAiMC40NCIsCiAgICAgICAgICAgICAgICAi5ryy6LeMIjogIisiLAogICAgICAgICAgICB9CiAgICAgICAgXQoKICAgIGZldGNoZXIuX2dldF9qc29uX29yX2xpc3QgPSBmYWtlX2dldCAgIyB0eXBlOiBpZ25vcmVbbWV0aG9kLWFzc2lnbl0KICAgIHJlc3VsdCA9IGZldGNoZXIuZ2V0X21haW5faW5kaWNlcygidHciKQoKICAgIGFzc2VydCByZXN1bHQgaXMgbm90IE5vbmUKICAgIGFzc2VydCBbaXRlbVsiY29kZSJdIGZvciBpdGVtIGluIHJlc3VsdF0gPT0gWyJUV0lJIl0KICAgIGFzc2VydCByZXN1bHRbMF1bImN1cnJlbnQiXSA9PSAyMzAwMC4yNQoKCmRlZiB0ZXN0X29mZmljaWFsX3RhaXdhbl9tYXJrZXRfYnJlYWR0aF9hZ2dyZWdhdGVzX3R3b19leGNoYW5nZXMoKSAtPiBOb25lOgogICAgZmV0Y2hlciA9IFR3c2VUcGV4RmV0Y2hlcigpCgogICAgZGVmIGZha2VfZ2V0KHVybDogc3RyLCAqKl9rd2FyZ3MpOgogICAgICAgIGlmICJTVE9DS19EQVlfQUxMIiBpbiB1cmw6CiAgICAgICAgICAgIHJldHVybiBbCiAgICAgICAgICAgICAgICB7IkRhdGUiOiAiMjAyNjA3MTciLCAiQ2hhbmdlIjogIisyLjAiLCAiVHJhZGVWYWx1ZSI6ICIxMDAwMDAwMDAifSwKICAgICAgICAgICAgICAgIHsiRGF0ZSI6ICIyMDI2MDcxNyIsICJDaGFuZ2UiOiAiLTEuMCIsICJUcmFkZVZhbHVlIjogIjI1MDAwMDAwMCJ9LAogICAgICAgICAgICBdCiAgICAgICAgcmV0dXJuIFsKICAgICAgICAgICAgeyJEYXRlIjogIjExNS8wNy8xNyIsICJDaGFuZ2UiOiAiMCIsICJUcmFuc2FjdGlvbkFtb3VudCI6ICIzMDAwMDAwMDAifSwKICAgICAgICAgICAgeyJEYXRlIjogIjExNS8wNy8xNyIsICJDaGFuZ2UiOiAiKzAuNSIsICJUcmFuc2FjdGlvbkFtb3VudCI6ICI0MDAwMDAwMDAifSwKICAgICAgICBdCgogICAgZmV0Y2hlci5fZ2V0X2pzb25fb3JfbGlzdCA9IGZha2VfZ2V0ICAjIHR5cGU6IGlnbm9yZVttZXRob2QtYXNzaWduXQogICAgcmVzdWx0ID0gZmV0Y2hlci5nZXRfbWFya2V0X2JyZWFkdGgoKQoKICAgIGFzc2VydCByZXN1bHQgaXMgbm90IE5vbmUKICAgIGFzc2VydCByZXN1bHRbInVwX2NvdW50Il0gPT0gMgogICAgYXNzZXJ0IHJlc3VsdFsiZG93bl9jb3VudCJdID09IDEKICAgIGFzc2VydCByZXN1bHRbImZsYXRfY291bnQiXSA9PSAxCiAgICBhc3NlcnQgcmVzdWx0WyJjb3ZlcmFnZSJdID09IDQKICAgIGFzc2VydCByZXN1bHRbInRvdGFsX2Ftb3VudCJdID09IDFfMDUwXzAwMF8wMDAuMAo=
+# -*- coding: utf-8 -*-
+"""Regression tests for official TWSE / TPEx fallbacks."""
+
+from __future__ import annotations
+
+from data_provider.base import DataFetchError
+from data_provider.twse_tpex_fetcher import TwseTpexFetcher
+
+
+def test_tpex_index_survives_twse_endpoint_failure() -> None:
+    fetcher = TwseTpexFetcher()
+
+    def fake_get(url: str, **_kwargs):
+        if "MI_INDEX" in url:
+            raise DataFetchError("TWSE unavailable")
+        return [
+            {"Date": "2026-07-16", "Close": "250.00", "Open": "248", "High": "251", "Low": "247"},
+            {"Date": "2026-07-17", "Close": "255.00", "Open": "250", "High": "256", "Low": "249"},
+        ]
+
+    fetcher._get_json_or_list = fake_get  # type: ignore[method-assign]
+    result = fetcher.get_main_indices("tw")
+
+    assert result is not None
+    assert [item["code"] for item in result] == ["TWOII"]
+    assert result[0]["current"] == 255.0
+
+
+def test_twse_index_survives_tpex_endpoint_failure() -> None:
+    fetcher = TwseTpexFetcher()
+
+    def fake_get(url: str, **_kwargs):
+        if "tpex_index" in url:
+            raise DataFetchError("TPEx unavailable")
+        return [
+            {
+                "指數": "發行量加權股價指數",
+                "收盤指數": "23000.25",
+                "漲跌點數": "100.5",
+                "漲跌百分比": "0.44",
+                "漲跌": "+",
+            }
+        ]
+
+    fetcher._get_json_or_list = fake_get  # type: ignore[method-assign]
+    result = fetcher.get_main_indices("tw")
+
+    assert result is not None
+    assert [item["code"] for item in result] == ["TWII"]
+    assert result[0]["current"] == 23000.25
+
+
+def test_official_taiwan_market_breadth_aggregates_two_exchanges() -> None:
+    fetcher = TwseTpexFetcher()
+
+    def fake_get(url: str, **_kwargs):
+        if "STOCK_DAY_ALL" in url:
+            return [
+                {"Date": "20260717", "Change": "+2.0", "TradeValue": "100000000"},
+                {"Date": "20260717", "Change": "-1.0", "TradeValue": "250000000"},
+            ]
+        return [
+            {"Date": "115/07/17", "Change": "0", "TransactionAmount": "300000000"},
+            {"Date": "115/07/17", "Change": "+0.5", "TransactionAmount": "400000000"},
+        ]
+
+    fetcher._get_json_or_list = fake_get  # type: ignore[method-assign]
+    result = fetcher.get_market_breadth()
+
+    assert result is not None
+    assert result["up_count"] == 2
+    assert result["down_count"] == 1
+    assert result["flat_count"] == 1
+    assert result["coverage"] == 4
+    assert result["total_amount"] == 1_050_000_000.0
