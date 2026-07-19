@@ -3296,6 +3296,21 @@ Sector text.
         assert "| 上证指数 | 3200.00 | 🟢 +0.68% |" in result
         assert "| 深证成指 | 9800.00 | 🔴 -0.42% |" in result
 
+    def test_indices_block_hides_turnover_when_index_sources_do_not_publish_it(self):
+        from src.market_analyzer import MarketOverview, MarketIndex
+
+        ma = self._make_market_analyzer_with_mock_generate_text(return_value=None)
+        overview = MarketOverview(
+            date="2026-03-05",
+            indices=[MarketIndex(code="SPX", name="S&P 500", current=5200.0, change_pct=0.68)],
+        )
+
+        result = ma._build_indices_block(overview)
+
+        assert "Turnover" not in result
+        assert "成交額" not in result
+        assert "未取得" not in result
+
     def test_no_private_attribute_access_in_market_analyzer_source(self):
         """Static guard: market_analyzer.py must not access private analyzer attrs."""
         import ast
