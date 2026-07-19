@@ -713,7 +713,7 @@ class TestAnalyzerGenerateText:
                 usage=None,
             )
 
-        with patch("src.analyzer.call_litellm_with_param_recovery", side_effect=_fake_call_litellm_with_param_recovery):
+        with patch("src.analyzer.call_litellm_with_rate_limit_recovery", side_effect=_fake_call_litellm_with_param_recovery):
             text, _, _ = analyzer._call_litellm("回归用例", {"max_tokens": 128, "temperature": 0.7})
 
         assert text == "ok"
@@ -733,7 +733,7 @@ class TestAnalyzerGenerateText:
     @patch("src.analyzer.Router")
     def test_analyzer_legacy_router_recovery_cache_is_scoped_by_api_base(self, mock_router):
         """Analyzer legacy recovery should not leak across same model different api_base."""
-        from src.analyzer import call_litellm_with_param_recovery as real_call
+        from src.llm.errors import call_litellm_with_param_recovery as real_call
         from src.llm.generation_params import clear_litellm_generation_param_recovery_cache
 
         clear_litellm_generation_param_recovery_cache()
@@ -782,7 +782,7 @@ class TestAnalyzerGenerateText:
         import src.analyzer as analyzer_module
         from src.analyzer import GeminiAnalyzer
 
-        with patch.object(analyzer_module, "call_litellm_with_param_recovery", side_effect=_fake_recovery):
+        with patch.object(analyzer_module, "call_litellm_with_rate_limit_recovery", side_effect=_fake_recovery):
             GeminiAnalyzer(config=strict_cfg)._call_litellm(
                 "prompt",
                 {"max_tokens": 128, "temperature": 0.2},
@@ -836,7 +836,7 @@ class TestAnalyzerGenerateText:
                 usage={"prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11},
             )
 
-        with patch("src.analyzer.call_litellm_with_param_recovery", side_effect=_fake_recovery):
+        with patch("src.analyzer.call_litellm_with_rate_limit_recovery", side_effect=_fake_recovery):
             text, _, _ = analyzer._call_litellm("dynamic prompt", {"max_tokens": 128, "temperature": 0.7})
 
         assert text == "ok"
@@ -877,7 +877,7 @@ class TestAnalyzerGenerateText:
                 },
             )
 
-        with patch("src.analyzer.call_litellm_with_param_recovery", side_effect=_fake_recovery):
+        with patch("src.analyzer.call_litellm_with_rate_limit_recovery", side_effect=_fake_recovery):
             _, _, usage = analyzer._call_litellm("dynamic prompt", {"max_tokens": 128, "temperature": 0.7})
 
         assert usage["prompt_tokens"] == 1200
@@ -913,7 +913,7 @@ class TestAnalyzerGenerateText:
                 usage=None,
             )
 
-        with patch("src.analyzer.call_litellm_with_param_recovery", side_effect=_fake_recovery):
+        with patch("src.analyzer.call_litellm_with_rate_limit_recovery", side_effect=_fake_recovery):
             text, _, usage = analyzer._call_litellm("dynamic prompt", {"max_tokens": 128, "temperature": 0.7})
 
         assert text == "ok"

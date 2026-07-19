@@ -150,6 +150,9 @@ class TestFetcherSourceOptimization(unittest.TestCase):
                 "PytdxFetcher",
                 "BaostockFetcher",
                 "YfinanceFetcher",
+                "TwseTpexFetcher",
+                "NasdaqWebFetcher",
+                "StooqFetcher",
             ],
         )
         mock_tushare.assert_not_called()
