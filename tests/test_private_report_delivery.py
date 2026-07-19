@@ -103,6 +103,22 @@ def test_daily_delivery_creates_only_docx(tmp_path: Path, monkeypatch) -> None:
     assert list(tmp_path.glob("*.pptx")) == []
 
 
+def test_docx_renderer_sets_traditional_chinese_east_asian_font(tmp_path: Path) -> None:
+    path = tmp_path / "daily.docx"
+    PrivateReportDelivery._create_docx(
+        path,
+        title="JEAC 每日投資報告",
+        markdown="# 市場結論\n\n- 等待確認",
+        generated_at=datetime(2026, 7, 19, tzinfo=timezone.utc),
+    )
+
+    from zipfile import ZipFile
+
+    with ZipFile(path) as archive:
+        styles = archive.read("word/styles.xml").decode("utf-8")
+    assert 'w:eastAsia="Microsoft JhengHei"' in styles
+
+
 def test_oauth_delivery_requires_client_and_refresh_token(tmp_path: Path) -> None:
     delivery = PrivateReportDelivery(
         enabled=True,
