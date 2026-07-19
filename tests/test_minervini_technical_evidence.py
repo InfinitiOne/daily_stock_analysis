@@ -2,6 +2,7 @@ import pandas as pd
 
 from src.stock_analyzer import StockTrendAnalyzer
 
+# Regression coverage for the deterministic Minervini evidence payload.
 
 def _rising_vcp_bars():
     bars = []
