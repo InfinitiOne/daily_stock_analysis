@@ -447,10 +447,14 @@ class StockAnalysisPipeline:
             if history_bars
             else "以已驗證日線、均線、量價與支撐壓力計算。"
         )
-        data_limitations = (
-            [f"目前僅有 {history_bars} 根日線；長週期 SEPA／Stage／VCP／Pivot 不適用。"]
-            if limited_history else []
-        )
+        if limited_history and history_bars:
+            data_limitations = [
+                f"目前僅有 {history_bars} 根日線；長週期 SEPA／Stage／VCP／Pivot 不適用。"
+            ]
+        elif limited_history:
+            data_limitations = ["日線歷史不足；長週期 SEPA／Stage／VCP／Pivot 不適用。"]
+        else:
+            data_limitations = []
         technical_risk = (
             f"若收盤跌破 {_number(structural_stop)}，原有技術結構失效。"
             if structural_stop is not None
