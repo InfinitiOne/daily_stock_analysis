@@ -12,6 +12,7 @@ A股自选股智能分析系统 - 核心分析流水线
 """
 
 import logging
+import os
 import threading
 import time
 import uuid
@@ -237,6 +238,8 @@ class StockAnalysisPipeline:
         self._daily_market_context_service_lock = threading.Lock()
         self._concept_rankings_cache_lock = threading.Lock()
         self._concept_rankings_cache: Dict[str, Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]] = {}
+        self._daily_source_trace_lock = threading.Lock()
+        self._daily_source_traces: Dict[str, List[Dict[str, str]]] = {}
         
         # 初始化搜索服务（可选，初始化失败不应阻断主分析流程）
         try:
@@ -289,6 +292,70 @@ class StockAnalysisPipeline:
                 exc_info=True,
             )
             self.social_sentiment_service = None
+
+    @staticmethod
+    def _weekly_history_days() -> int:
+        """Return the external-history request window for this run.
+
+        Weekly SEPA/Stage 2 checks need a full year of trading sessions, not
+        the 30-day cache used by a normal daily report.  Keep this environment
+        controlled so scheduled workflows can request the longer window
+        without making every ad-hoc analysis slower.
+        """
+        weekly_mode = str(os.getenv("JEAC_WEEKLY_PORTFOLIO_MODE", "")).strip().lower()
+        if weekly_mode not in {"1", "true", "yes", "on"}:
+            return 30
+        try:
+            return min(800, max(360, int(os.getenv("JEAC_WEEKLY_HISTORY_DAYS", "420"))))
+        except ValueError:
+            return 420
+
+    def _requires_weekly_technical_coverage(self) -> bool:
+        return bool(getattr(self, "weekly_report_strict", False))
+
+    def _ensure_daily_source_trace_store(self) -> None:
+        """Initialise report-source evidence for normal and test construction."""
+        if not hasattr(self, "_daily_source_trace_lock") or self._daily_source_trace_lock is None:
+            self._daily_source_trace_lock = threading.Lock()
+        if not hasattr(self, "_daily_source_traces") or self._daily_source_traces is None:
+            self._daily_source_traces = {}
+
+    def _set_daily_source_trace(self, code: str, trace: Optional[List[Dict[str, Any]]]) -> None:
+        self._ensure_daily_source_trace_store()
+        normalized = normalize_stock_code(str(code or "")).upper()
+        prepared: List[Dict[str, str]] = []
+        for item in trace or []:
+            if not isinstance(item, dict):
+                continue
+            provider = str(item.get("provider") or "未命名資料源").strip()
+            status = str(item.get("status") or "unknown").strip()
+            reason = str(item.get("reason") or "").strip()
+            if not provider:
+                continue
+            payload = {"provider": provider, "status": status}
+            if reason:
+                payload["reason"] = reason
+            prepared.append(payload)
+        with self._daily_source_trace_lock:
+            self._daily_source_traces[normalized] = prepared
+
+    def _get_daily_source_trace(self, code: str) -> List[Dict[str, str]]:
+        self._ensure_daily_source_trace_store()
+        normalized = normalize_stock_code(str(code or "")).upper()
+        with self._daily_source_trace_lock:
+            return [dict(item) for item in self._daily_source_traces.get(normalized, [])]
+
+    def _attach_daily_source_trace(self, result: Optional[AnalysisResult], code: str) -> Optional[AnalysisResult]:
+        """Attach the actual fallback route to an analysis result for reports."""
+        if result is None:
+            return result
+        trace = self._get_daily_source_trace(code)
+        if not trace:
+            return result
+        evidence = dict(getattr(result, "technical_evidence", {}) or {})
+        evidence["daily_source_trace"] = trace
+        result.technical_evidence = evidence
+        return result
 
     def _emit_progress(self, progress: int, message: str) -> None:
         """Best-effort bridge from pipeline stages to task SSE progress."""
@@ -343,16 +410,46 @@ class StockAnalysisPipeline:
                 code, current_time=current_time
             )
 
+            # Weekly reports additionally need a full SEPA/Stage 2 history.
+            # A single current bar must never suppress the external refill.
+            has_required_history = True
+            if self._requires_weekly_technical_coverage():
+                history_start = target_date - timedelta(days=self._weekly_history_days() + 45)
+                existing_bars = self.db.get_data_range(code, history_start, target_date)
+                has_required_history = len(existing_bars or []) >= 252
+
             # 断点续传检查：如果最新可复用交易日的数据已存在，则跳过
-            if not force_refresh and self.db.has_today_data(code, target_date):
+            if not force_refresh and self.db.has_today_data(code, target_date) and has_required_history:
                 logger.info(
                     f"{stock_name}({code}) {target_date} 数据已存在，跳过获取（断点续传）"
                 )
+                self._set_daily_source_trace(
+                    code,
+                    [
+                        {
+                            "provider": "本地已驗證日線快取",
+                            "status": "cached",
+                            "reason": f"{target_date} 已存在且符合本輪歷史資料需求",
+                        }
+                    ],
+                )
                 return True, None
+            if not has_required_history:
+                logger.info(
+                    "%s(%s) 既有日線不足 252 根，啟動外部資料來源補齊 SEPA 歷史資料",
+                    stock_name,
+                    code,
+                )
 
             # 从数据源获取数据
             logger.info(f"{stock_name}({code}) 开始从数据源获取数据...")
-            df, source_name = self.fetcher_manager.get_daily_data(code, days=30)
+            df, source_name = self.fetcher_manager.get_daily_data(
+                code,
+                days=self._weekly_history_days(),
+            )
+            get_trace = getattr(self.fetcher_manager, "get_daily_source_trace", None)
+            if callable(get_trace):
+                self._set_daily_source_trace(code, get_trace(code))
 
             if df is None or df.empty:
                 return False, "获取数据为空"
@@ -364,6 +461,9 @@ class StockAnalysisPipeline:
             return True, None
 
         except Exception as e:
+            get_trace = getattr(self.fetcher_manager, "get_daily_source_trace", None)
+            if callable(get_trace):
+                self._set_daily_source_trace(code, get_trace(code))
             error_msg = f"获取/保存数据失败: {str(e)}"
             logger.error(f"{stock_name}({code}) {error_msg}")
             return False, error_msg
@@ -529,15 +629,26 @@ class StockAnalysisPipeline:
 
             # Step 3: 趋势分析（基于交易理念）— 在 Agent 分支之前执行，供两条路径共用
             trend_result: Optional[TrendAnalysisResult] = None
+            daily_data_sources: List[str] = []
             try:
                 from src.services.history_loader import get_frozen_target_date
                 _mkt = get_market_for_stock(normalize_stock_code(code))
                 frozen = get_frozen_target_date()
                 end_date = frozen if frozen else get_market_now(_mkt).date()
-                start_date = end_date - timedelta(days=89)  # ~60 trading days for MA60
+                history_days = self._weekly_history_days()
+                # Use a calendar buffer because 420 calendar days is roughly
+                # one full year of sessions in Taiwan / the US.
+                start_date = end_date - timedelta(days=max(89, history_days + 45))
                 historical_bars = self.db.get_data_range(code, start_date, end_date)
                 if historical_bars:
                     df = pd.DataFrame([bar.to_dict() for bar in historical_bars])
+                    daily_data_sources = list(
+                        dict.fromkeys(
+                            str(item.get("data_source"))
+                            for item in df.to_dict(orient="records")
+                            if item.get("data_source")
+                        )
+                    )
                     # Issue #234: Augment with realtime for intraday MA calculation
                     if self.config.enable_realtime_quote and realtime_quote:
                         df = self._augment_historical_with_realtime(df, realtime_quote, code)
@@ -556,30 +667,58 @@ class StockAnalysisPipeline:
                 reasons = []
                 if trend_result and getattr(trend_result, "risk_factors", None):
                     reasons = list(trend_result.risk_factors)
-                return build_data_unavailable_result(
+                return self._attach_daily_source_trace(
+                    build_data_unavailable_result(
+                        code,
+                        stock_name,
+                        reasons=reasons or ["核心日线资料未取得或不足，技术判定已暂停"],
+                        report_language=report_language,
+                    ),
                     code,
+                )
+
+            weekly_evidence = getattr(trend_result, "technical_evidence", {}) or {}
+            if (
+                self._requires_weekly_technical_coverage()
+                and weekly_evidence.get("data_status") != "available"
+            ):
+                reason = str(weekly_evidence.get("reason") or "SEPA／Stage 2 核心日線未取得")
+                logger.warning(
+                    "%s(%s) %s；停止週報技術評分與 LLM 交易建議",
                     stock_name,
-                    reasons=reasons or ["核心日线资料未取得或不足，技术判定已暂停"],
-                    report_language=report_language,
+                    code,
+                    reason,
+                )
+                return self._attach_daily_source_trace(
+                    build_data_unavailable_result(
+                        code,
+                        stock_name,
+                        reasons=[reason],
+                        report_language=report_language,
+                    ),
+                    code,
                 )
 
             if use_agent:
                 logger.info(f"{stock_name}({code}) 启用 Agent 模式进行分析")
                 self._emit_progress(58, f"{stock_name}：正在切换 Agent 分析链路")
-                return self._analyze_with_agent(
+                return self._attach_daily_source_trace(
+                    self._analyze_with_agent(
+                        code,
+                        report_type,
+                        query_id,
+                        stock_name,
+                        realtime_quote,
+                        chip_data,
+                        fundamental_context,
+                        trend_result,
+                        market_phase_context=market_phase_context_dict,
+                        market_phase_summary=market_phase_summary,
+                        daily_market_context=daily_market_context,
+                        portfolio_context=portfolio_context,
+                        market_structure_context=market_structure_context,
+                    ),
                     code,
-                    report_type,
-                    query_id,
-                    stock_name,
-                    realtime_quote,
-                    chip_data,
-                    fundamental_context,
-                    trend_result,
-                    market_phase_context=market_phase_context_dict,
-                    market_phase_summary=market_phase_summary,
-                    daily_market_context=daily_market_context,
-                    portfolio_context=portfolio_context,
-                    market_structure_context=market_structure_context,
                 )
 
             # Step 4: 多维度情报搜索（最新消息+风险排查+业绩预期）
@@ -810,6 +949,16 @@ class StockAnalysisPipeline:
                     result.fundamental_context = fundamental_context
                 if isinstance(market_structure_context, dict):
                     result.market_structure_context = market_structure_context
+                result.technical_evidence = dict(
+                    getattr(trend_result, "technical_evidence", {}) or {}
+                )
+                if daily_data_sources:
+                    daily_source_text = "daily:" + ",".join(daily_data_sources)
+                    result.data_sources = (
+                        f"{result.data_sources},{daily_source_text}"
+                        if result.data_sources
+                        else daily_source_text
+                    )
                 result.market_phase_summary = market_phase_summary
                 result.analysis_context_pack_overview = analysis_context_pack_overview
                 self._refresh_decision_action_for_final_result(
@@ -869,7 +1018,7 @@ class StockAnalysisPipeline:
                     )
                     logger.warning(f"{stock_name}({code}) 保存分析历史失败: {e}")
 
-            return result
+            return self._attach_daily_source_trace(result, code)
 
         except Exception as e:
             logger.error(f"{stock_name}({code}) 分析失败: {e}")
@@ -971,6 +1120,10 @@ class StockAnalysisPipeline:
                 'signal_score': trend_result.signal_score,
                 'signal_reasons': trend_result.signal_reasons,
                 'risk_factors': trend_result.risk_factors,
+                'ma50': trend_result.ma50,
+                'ma150': trend_result.ma150,
+                'ma200': trend_result.ma200,
+                'technical_evidence': dict(getattr(trend_result, 'technical_evidence', {}) or {}),
             }
 
         # Issue #234：盘中分析使用实时 OHLC 与趋势 MA 覆盖 today。
@@ -2912,11 +3065,14 @@ class StockAnalysisPipeline:
                 logger.warning(f"[{code}] 数据获取失败: {error}")
                 # Never score or sell from an empty core-data set. This is
                 # particularly important for ETFs whose dedicated route failed.
-                return build_data_unavailable_result(
+                return self._attach_daily_source_trace(
+                    build_data_unavailable_result(
+                        code,
+                        code,
+                        reasons=[error or "核心日线数据未取得"],
+                        report_language=getattr(self.config, "report_language", "zh"),
+                    ),
                     code,
-                    code,
-                    reasons=[error or "核心日线数据未取得"],
-                    report_language=getattr(self.config, "report_language", "zh"),
                 )
             else:
                 self._emit_progress(16, f"{code}：行情数据准备完成")
@@ -2950,7 +3106,7 @@ class StockAnalysisPipeline:
                     f"[{code}] 分析未成功: {result.error_message or '未知错误'}"
                 )
             
-            return result
+            return self._attach_daily_source_trace(result, code)
             
         except Exception as e:
             # A Groq/OpenAI-compatible 429 is an availability interruption, not
@@ -2959,12 +3115,15 @@ class StockAnalysisPipeline:
             error_text = str(e)
             if llm_analysis_started and ("429" in error_text or "rate limit" in error_text.lower()):
                 logger.error("[%s] LLM 限额触发，停止该标的报告生成: %s", code, error_text)
-                return build_data_unavailable_result(
+                return self._attach_daily_source_trace(
+                    build_data_unavailable_result(
+                        code,
+                        code,
+                        reasons=[f"LLM 服务回传 429／限额；报告生成已暂停：{error_text}"],
+                        report_language=getattr(self.config, "report_language", "zh"),
+                        data_status="paused",
+                    ),
                     code,
-                    code,
-                    reasons=[f"LLM 服务回传 429／限额；报告生成已暂停：{error_text}"],
-                    report_language=getattr(self.config, "report_language", "zh"),
-                    data_status="paused",
                 )
             # 捕获所有异常，确保单股失败不影响整体
             logger.exception(f"[{code}] 处理过程发生未知异常: {e}")
@@ -3026,7 +3185,10 @@ class StockAnalysisPipeline:
         # === 批量预取实时行情（优化：避免每只股票都触发全量拉取）===
         # 只有股票数量 >= 5 时才进行预取，少量股票直接逐个查询更高效
         if len(stock_codes) >= 5:
-            daily_prefetch_count = self.fetcher_manager.prefetch_daily_klines(stock_codes, days=30)
+            daily_prefetch_count = self.fetcher_manager.prefetch_daily_klines(
+                stock_codes,
+                days=self._weekly_history_days(),
+            )
             if daily_prefetch_count > 0:
                 logger.info(
                     "[prefetch] component=daily_kline_prefetch action=complete "

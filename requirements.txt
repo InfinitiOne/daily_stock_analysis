@@ -75,6 +75,7 @@ google-api-python-client>=2.0.0  # Private Google Drive upload
 google-auth>=2.0.0
 # OAuth flow used once locally to authorize personal Gmail My Drive uploads
 google-auth-oauthlib>=1.2.0          # Google Service Account credentials
+opencc-python-reimplemented>=0.1.7   # Traditional Chinese document rendering (zh-TW)
 
 # FastAPI Web framework
 fastapi>=0.109.0            # Modern Python Web framework

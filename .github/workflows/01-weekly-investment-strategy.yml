@@ -57,10 +57,26 @@ jobs:
           ANALYSIS_MAX_OUTPUT_TOKENS: ${{ vars.ANALYSIS_MAX_OUTPUT_TOKENS || '2400' }}
           FUGLE_API_KEY: ${{ secrets.FUGLE_API_KEY }}
           FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
+          # Optional US-market API fallbacks.  When these are blank, the
+          # no-key Nasdaq／FRED public route is attempted after Yahoo Finance,
+          # with Stooq retained as a final best-effort fallback.
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
           FUGLE_PRIORITY: ${{ vars.FUGLE_PRIORITY || '0' }}
           FINMIND_PRIORITY: ${{ vars.FINMIND_PRIORITY || '1' }}
           MARKET_REVIEW_ENABLED: ${{ vars.MARKET_REVIEW_ENABLED || 'true' }}
-          MARKET_REVIEW_REGION: ${{ vars.MARKET_REVIEW_REGION || 'tw' }}
+          # Weekly strategy is deliberately scoped to Taiwan and US markets.
+          # Do not inherit a generic repository setting here: it can otherwise
+          # reintroduce A-share/China market context into the private report.
+          MARKET_REVIEW_REGION: "tw,us"
+          # All private weekly documents and Markdown reports use Taiwan
+          # Traditional Chinese.  Internal JSON keys remain English.
+          REPORT_LANGUAGE: "zh-TW"
+          # SEPA / Stage 2 / VCP / Pivot require substantially more history
+          # than a short daily run.  The pipeline blocks a full weekly report
+          # when this core history cannot be retrieved.
+          JEAC_WEEKLY_HISTORY_DAYS: "420"
+          JEAC_REQUIRE_MARKET_CORE_DATA: "true"
           REPORT_TYPE: full
           # Private delivery: documents are uploaded only to the configured
           # Google Drive folder, never to a public GitHub artifact.

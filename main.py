@@ -608,7 +608,7 @@ def _resolve_daily_market_context_target_date(
     current_time: datetime,
 ) -> date:
     normalized_region = str(region or "cn").strip().lower()
-    market = normalized_region if normalized_region in {"cn", "hk", "us", "jp", "kr"} else "cn"
+    market = normalized_region if normalized_region in {"cn", "tw", "hk", "us", "jp", "kr"} else "cn"
 
     from src.core.trading_calendar import get_effective_trading_date
 
@@ -625,6 +625,145 @@ def _market_review_report_text(review_result: Any) -> str:
     if isinstance(report, str):
         return report
     return review_result if isinstance(review_result, str) else ""
+
+
+def _weekly_market_integrity_reason(review_result: Any, required_regions: str) -> Optional[str]:
+    """Fail closed when the Taiwan/US core-index contract is incomplete."""
+    payload = getattr(review_result, "market_review_payload", None)
+    if not isinstance(payload, dict):
+        return "市場資料未取得結構化完整性資訊"
+    markets = payload.get("markets") if isinstance(payload.get("markets"), dict) else {
+        str(payload.get("region") or ""): payload
+    }
+    wanted = [item.strip().lower() for item in str(required_regions or "").split(",") if item.strip()]
+    failures: List[str] = []
+    for region in wanted:
+        market_payload = markets.get(region)
+        integrity = market_payload.get("data_integrity") if isinstance(market_payload, dict) else None
+        if not isinstance(integrity, dict) or integrity.get("status") != "available":
+            missing = ", ".join((integrity or {}).get("missing_indices") or ["核心指數"])
+            source = (integrity or {}).get("source") or "未取得"
+            failures.append(f"{region}: {missing}（來源：{source}）")
+    return "；".join(failures) if failures else None
+
+
+def _report_provider_name(value: Any, stock_code: str = "") -> str:
+    """Use stable, human-readable provider names in private report evidence."""
+    provider = str(value or "未取得").strip()
+    code = str(stock_code or "").strip().upper()
+    if provider == "TwseTpexFetcher":
+        if code.endswith(".TWO"):
+            return "TPEx 官方資料"
+        if code.endswith(".TW"):
+            return "TWSE 官方資料"
+        return "TWSE／TPEx 官方資料"
+    labels = {
+        "FugleFetcher": "Fugle",
+        "FinMindFetcher": "FinMind",
+        "YfinanceFetcher": "Yahoo Finance",
+        "NasdaqWebFetcher": "Nasdaq／FRED 公開資料",
+        "StooqFetcher": "Stooq 公開資料",
+        "FinnhubFetcher": "Finnhub",
+        "AlphaVantageFetcher": "Alpha Vantage",
+        "本地已驗證日線快取": "本地已驗證日線快取",
+    }
+    return labels.get(provider, provider)
+
+
+def _report_provider_list(value: Any, stock_code: str = "") -> str:
+    text = str(value or "未取得")
+    for raw, display in (
+        ("TwseTpexFetcher", _report_provider_name("TwseTpexFetcher", stock_code)),
+        ("FugleFetcher", "Fugle"),
+        ("FinMindFetcher", "FinMind"),
+        ("YfinanceFetcher", "Yahoo Finance"),
+        ("NasdaqWebFetcher", "Nasdaq／FRED 公開資料"),
+        ("StooqFetcher", "Stooq 公開資料"),
+        ("FinnhubFetcher", "Finnhub"),
+        ("AlphaVantageFetcher", "Alpha Vantage"),
+    ):
+        text = text.replace(raw, display)
+    return text
+
+
+def _report_source_status(value: Any) -> str:
+    status = str(value or "").strip().lower()
+    return {
+        "success": "已取得",
+        "failed": "失敗後切換備援",
+        "skipped": "未設定／未呼叫",
+        "cached": "本地已驗證快取",
+    }.get(status, "未取得／暫停判定")
+
+
+def _report_markdown_cell(value: Any, fallback: str = "未取得") -> str:
+    text = " ".join(str(value or fallback).split()).replace("|", "／")
+    return text or fallback
+
+
+def _weekly_data_sources_markdown(results: List[Any], review_result: Any) -> str:
+    """Render actual provider/status evidence; no blank cells and no invented sources."""
+    lines = ["## 資料來源與完整性", "", "### 市場資料", "", "| 市場 | 核心指數 | 狀態 | 實際來源 |", "| --- | --- | --- | --- |"]
+    payload = getattr(review_result, "market_review_payload", {}) if review_result is not None else {}
+    markets = payload.get("markets") if isinstance(payload, dict) and isinstance(payload.get("markets"), dict) else {}
+    if not markets and isinstance(payload, dict) and payload:
+        markets = {str(payload.get("region") or "未知"): payload}
+    labels = {"tw": "台股", "us": "美股"}
+    for region in ("tw", "us"):
+        item = markets.get(region, {})
+        integrity = item.get("data_integrity", {}) if isinstance(item, dict) else {}
+        indices = ", ".join(integrity.get("received_indices") or []) or "未取得"
+        status = "已取得" if integrity.get("status") == "available" else "未取得／暫停判定"
+        source = _report_provider_list(integrity.get("source") or "未取得")
+        lines.append(f"| {labels[region]} | {indices} | {status} | {source} |")
+
+    lines.extend(["", "### 大盤來源路由明細", "", "| 市場 | 資料源 | 狀態 | 說明 |", "| --- | --- | --- | --- |"])
+    for region in ("tw", "us"):
+        item = markets.get(region, {})
+        integrity = item.get("data_integrity", {}) if isinstance(item, dict) else {}
+        source_status = integrity.get("source_status") if isinstance(integrity, dict) else None
+        if not isinstance(source_status, list) or not source_status:
+            lines.append(f"| {labels[region]} | 本輪來源狀態 | 未取得／暫停判定 | 未提供來源呼叫紀錄 |")
+            continue
+        for source_item in source_status:
+            if not isinstance(source_item, dict):
+                continue
+            provider = _report_provider_name(source_item.get("provider"))
+            status = _report_source_status(source_item.get("status"))
+            reason = _report_markdown_cell(source_item.get("reason"), "未提供")
+            lines.append(f"| {labels[region]} | {provider} | {status} | {reason} |")
+
+    lines.extend(["", "### 持倉與候選股資料", "", "| 標的 | 日線／技術 | SEPA／Stage 2／VCP／Pivot | 基本面與資料來源 |", "| --- | --- | --- | --- |"])
+    for result in results:
+        evidence = getattr(result, "technical_evidence", {}) or {}
+        tech_status = "已取得" if evidence.get("data_status") == "available" else "未取得／暫停判定"
+        setup = "／".join(str(evidence.get(key) or "未取得／暫停判定") for key in ("sepa", "stage_2", "vcp", "pivot"))
+        fundamentals = getattr(result, "fundamental_context", {}) or {}
+        chain = fundamentals.get("source_chain", []) if isinstance(fundamentals, dict) else []
+        providers = [str(item.get("provider")) for item in chain if isinstance(item, dict) and item.get("result") == "ok" and item.get("provider")]
+        source = ", ".join(dict.fromkeys(providers)) or str(getattr(result, "data_sources", "") or "未取得")
+        if tech_status != "已取得":
+            reasons = "；".join(getattr(result, "data_missing_reasons", []) or [])
+            source = f"{source}；失敗原因：{reasons or '未提供'}"
+        source = _report_markdown_cell(_report_provider_list(source, getattr(result, "code", "")))
+        lines.append(f"| {getattr(result, 'code', '未知')} | {tech_status} | {setup} | {source} |")
+
+    lines.extend(["", "### 個股日線路由明細", "", "| 標的 | 資料源 | 狀態 | 說明 |", "| --- | --- | --- | --- |"])
+    for result in results:
+        code = str(getattr(result, "code", "未知") or "未知")
+        evidence = getattr(result, "technical_evidence", {}) or {}
+        trace = evidence.get("daily_source_trace") if isinstance(evidence, dict) else None
+        if not isinstance(trace, list) or not trace:
+            lines.append(f"| {code} | 本輪日線路由 | 未取得／暫停判定 | 未提供來源呼叫紀錄 |")
+            continue
+        for source_item in trace:
+            if not isinstance(source_item, dict):
+                continue
+            provider = _report_provider_name(source_item.get("provider"), code)
+            status = _report_source_status(source_item.get("status"))
+            reason = _report_markdown_cell(source_item.get("reason"), "未提供")
+            lines.append(f"| {code} | {provider} | {status} | {reason} |")
+    return "\n".join(lines)
 
 
 def _save_reused_market_review_report(
@@ -662,6 +801,19 @@ def _save_reused_market_review_report(
 
 def _weekly_portfolio_mode_enabled() -> bool:
     return os.getenv("JEAC_WEEKLY_PORTFOLIO_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _portfolio_mode_enabled() -> bool:
+    """Return whether this run must use the protected current-portfolio master.
+
+    Weekly reports have always been strict.  Daily scheduled reports use the
+    same source of truth so that an old ``STOCK_LIST`` variable cannot silently
+    reduce the analysis to one unrelated symbol.
+    """
+
+    return _weekly_portfolio_mode_enabled() or os.getenv(
+        "JEAC_PORTFOLIO_MODE", ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _weekly_candidate_codes() -> List[str]:
@@ -765,6 +917,7 @@ def _build_private_report_markdown(
     results: List[Any],
     market_report: str,
     report_type: str,
+    review_result: Any = None,
 ) -> str:
     """Build one source document for private DOCX/PPTX export."""
     sections: List[str] = []
@@ -773,6 +926,10 @@ def _build_private_report_markdown(
     if results:
         stock_report = notifier.generate_aggregate_report(results, report_type)
         sections.append(f"# 持仓与候选股\n\n{stock_report}")
+    # Never hide a source outage behind empty cells in the private daily
+    # document.  This also makes the DOCX/PPTX audit trail match weekly
+    # reports without claiming an unavailable field was zero.
+    sections.append(_weekly_data_sources_markdown(results, review_result))
     return "\n\n---\n\n".join(sections)
 
 
@@ -798,10 +955,12 @@ def run_full_analysis(
 
         weekly_portfolio = None
         weekly_mode = _weekly_portfolio_mode_enabled()
+        portfolio_mode = _portfolio_mode_enabled()
         weekly_expected_codes: List[str] = []
-        if weekly_mode:
-            # Weekly reports are driven exclusively by the current portfolio
-            # master. STOCK_LIST remains available for non-weekly runs only.
+        if portfolio_mode:
+            # Scheduled daily and weekly reports are driven exclusively by the
+            # current portfolio master.  STOCK_LIST remains available only to
+            # explicit local/manual runs that do not opt into portfolio mode.
             from src.services.weekly_portfolio import (
                 load_current_portfolio,
                 merge_weekly_symbols,
@@ -810,14 +969,15 @@ def run_full_analysis(
             weekly_portfolio = load_current_portfolio()
             weekly_expected_codes = merge_weekly_symbols(
                 weekly_portfolio,
-                _weekly_candidate_codes(),
+                _weekly_candidate_codes() if weekly_mode else (),
             )
             stock_codes = list(weekly_expected_codes)
             # The weekly portfolio is supplied by a secret.  Do not expose
             # holdings in logs when the source repository is public.
             logger.info(
-                "[weekly-portfolio] 已读取 %s，持仓/候选共 %d 档（代码已隐藏）",
+                "[portfolio-master] 已讀取 %s，持倉%s共 %d 檔（代碼已隱藏）",
                 weekly_portfolio.path.name,
+                "與候選股" if weekly_mode else "",
                 len(stock_codes),
             )
         # Issue #529: Hot-reload STOCK_LIST from .env on non-weekly runs.
@@ -873,6 +1033,9 @@ def run_full_analysis(
         should_use_daily_market_context = (
             should_run_market_review
             and getattr(config, 'daily_market_context_enabled', True)
+            # Weekly reports must generate a fresh, validated Taiwan + US
+            # review.  A cached single-market daily context is not acceptable.
+            and not weekly_mode
         )
         analysis_reference_time = datetime.now(timezone.utc)
         daily_market_context_target_date = None
@@ -894,8 +1057,9 @@ def run_full_analysis(
             daily_market_context_enabled=should_use_daily_market_context,
             daily_market_context_allow_generate=should_use_daily_market_context,
         )
-        if weekly_mode and weekly_portfolio is not None:
+        if portfolio_mode and weekly_portfolio is not None:
             pipeline.portfolio_context = weekly_portfolio.to_context()
+        if weekly_mode and weekly_portfolio is not None:
             pipeline.weekly_report_strict = True
             pipeline.weekly_expected_symbols = list(weekly_expected_codes)
         if should_use_daily_market_context:
@@ -1043,6 +1207,11 @@ def run_full_analysis(
                     override_region=market_review_region,
                     query_id=query_id,
                     trigger_source=review_trigger_source,
+                    # Private daily documents enforce the same core-market
+                    # completeness contract as weekly reports.  Ask the
+                    # review runner for its structured source/integrity
+                    # payload instead of losing that evidence in a string.
+                    return_structured=(weekly_mode or _private_report_export_enabled()),
                 )
                 # 如果复盘仍未执行成功，再做一次复用历史/缓存读取（防止与并发运行竞态）。
                 if not review_result and should_use_daily_market_context:
@@ -1084,16 +1253,37 @@ def run_full_analysis(
                 )
                 return False
 
+            market_reason = _weekly_market_integrity_reason(
+                review_result,
+                market_review_region,
+            )
+            if market_reason:
+                reason = f"市場核心資料未完整取得；未生成完整週報。{market_reason}"
+                logger.error("[weekly-integrity] %s", reason)
+                _save_weekly_integrity_block_report(
+                    pipeline.notifier,
+                    expected_codes=weekly_expected_codes,
+                    results=results,
+                    reason=reason,
+                )
+                return False
+
             stock_report = pipeline.notifier.generate_aggregate_report(
                 results,
                 getattr(config, "report_type", "simple"),
             )
             weekly_report = "\n\n---\n\n".join(
                 [
-                    "# JEAC Weekly Investment Strategy",
-                    f"## 市场环境\n\n{market_report}",
-                    f"## 持仓与候选股\n\n{stock_report}",
+                    "# JEAC 每週投資策略報告",
+                    f"## 台股與美股市場環境\n\n{market_report}",
+                    _weekly_data_sources_markdown(results, review_result),
+                    f"## 持倉與候選股\n\n{stock_report}",
                 ]
+            )
+            from src.report_language import ensure_traditional_chinese
+            weekly_report = ensure_traditional_chinese(
+                weekly_report,
+                os.getenv("REPORT_LANGUAGE") or getattr(config, "report_language", ""),
             )
             pipeline.notifier.save_report_to_file(
                 weekly_report,
@@ -1113,14 +1303,24 @@ def run_full_analysis(
             return True
 
         # Daily document export has the same fail-closed rule: no incomplete
-        # stock result and no missing market section may create a private file.
+        # stock result and no missing core Taiwan / US market section may
+        # create a private file.
         if _private_report_export_enabled():
-            if _results_ready_for_private_export(results) and market_report:
+            daily_market_reason = _weekly_market_integrity_reason(
+                review_result,
+                market_review_region,
+            )
+            if (
+                _results_ready_for_private_export(results)
+                and market_report
+                and not daily_market_reason
+            ):
                 private_markdown = _build_private_report_markdown(
                     notifier=pipeline.notifier,
                     results=results,
                     market_report=market_report,
                     report_type=getattr(config, "report_type", "simple"),
+                    review_result=review_result if 'review_result' in locals() else None,
                 )
                 _export_private_report(
                     report_kind=os.getenv("JEAC_REPORT_KIND", "daily"),
@@ -1128,7 +1328,8 @@ def run_full_analysis(
                 )
             else:
                 logger.warning(
-                    "[private-report] daily export skipped: market or stock data did not pass integrity"
+                    "[private-report] daily export skipped: market or stock data did not pass integrity: %s",
+                    daily_market_reason or "market report / stock data unavailable",
                 )
 
         # Issue #190: 合并推送（个股+大盘复盘）

@@ -37,6 +37,11 @@ from .akshare_fetcher import AkshareFetcher, is_hk_stock_code
 from .tushare_fetcher import TushareFetcher
 from .fugle_fetcher import FugleFetcher
 from .finmind_fetcher import FinMindFetcher
+from .twse_tpex_fetcher import TwseTpexFetcher
+from .nasdaq_web_fetcher import NasdaqWebFetcher
+from .mops_open_data_fetcher import MopsOpenDataFetcher
+from .sec_edgar_fundamental_adapter import SecEdgarFundamentalAdapter
+from .stooq_fetcher import StooqFetcher
 from .pytdx_fetcher import PytdxFetcher
 from .baostock_fetcher import BaostockFetcher
 from .yfinance_fetcher import YfinanceFetcher
@@ -54,6 +59,11 @@ __all__ = [
     'TushareFetcher',
     'FugleFetcher',
     'FinMindFetcher',
+    'TwseTpexFetcher',
+    'NasdaqWebFetcher',
+    'MopsOpenDataFetcher',
+    'SecEdgarFundamentalAdapter',
+    'StooqFetcher',
     'PytdxFetcher',
     'BaostockFetcher',
     'YfinanceFetcher',

@@ -95,7 +95,14 @@ class TrendAnalysisResult:
     ma10: float = 0.0
     ma20: float = 0.0
     ma60: float = 0.0
+    ma50: float = 0.0
+    ma150: float = 0.0
+    ma200: float = 0.0
     current_price: float = 0.0
+    # Weekly SEPA / Stage 2 / VCP / Pivot evidence.  It is deliberately
+    # separate from the short-horizon score so missing long history can never
+    # become an artificial "0" or a sell instruction.
+    technical_evidence: Dict[str, Any] = field(default_factory=dict)
     
     # 乖离率（与 MA5 的偏离度）
     bias_ma5: float = 0.0            # (Close - MA5) / MA5 * 100
@@ -144,6 +151,9 @@ class TrendAnalysisResult:
             'ma10': self.ma10,
             'ma20': self.ma20,
             'ma60': self.ma60,
+            'ma50': self.ma50,
+            'ma150': self.ma150,
+            'ma200': self.ma200,
             'current_price': self.current_price,
             'bias_ma5': self.bias_ma5,
             'bias_ma10': self.bias_ma10,
@@ -168,6 +178,7 @@ class TrendAnalysisResult:
             'rsi_24': self.rsi_24,
             'rsi_status': self.rsi_status.value,
             'rsi_signal': self.rsi_signal,
+            'technical_evidence': self.technical_evidence,
         }
 
 
@@ -241,6 +252,10 @@ class StockTrendAnalyzer:
         result.ma10 = float(latest['MA10'])
         result.ma20 = float(latest['MA20'])
         result.ma60 = float(latest.get('MA60', 0))
+        result.ma50 = float(latest.get('MA50', 0) or 0)
+        result.ma150 = float(latest.get('MA150', 0) or 0)
+        result.ma200 = float(latest.get('MA200', 0) or 0)
+        result.technical_evidence = self._build_weekly_technical_evidence(df)
 
         # 1. 趋势判断
         self._analyze_trend(df, result)
@@ -271,11 +286,72 @@ class StockTrendAnalyzer:
         df['MA5'] = df['close'].rolling(window=5).mean()
         df['MA10'] = df['close'].rolling(window=10).mean()
         df['MA20'] = df['close'].rolling(window=20).mean()
+        df['MA50'] = df['close'].rolling(window=50).mean()
         if len(df) >= 60:
             df['MA60'] = df['close'].rolling(window=60).mean()
         else:
             df['MA60'] = df['MA20']  # 数据不足时使用 MA20 替代
+        df['MA150'] = df['close'].rolling(window=150).mean()
+        df['MA200'] = df['close'].rolling(window=200).mean()
         return df
+
+    @staticmethod
+    def _build_weekly_technical_evidence(df: pd.DataFrame) -> Dict[str, Any]:
+        """Build auditable SEPA evidence; never infer a long-term setup from short data."""
+        history_bars = len(df)
+        required_bars = 252
+        if history_bars < required_bars:
+            return {
+                "data_status": "unavailable",
+                "history_bars": history_bars,
+                "required_history_bars": required_bars,
+                "stage_2": "未取得／暫停判定",
+                "sepa": "未取得／暫停判定",
+                "vcp": "未取得／暫停判定",
+                "pivot": "未取得／暫停判定",
+                "reason": f"日線僅 {history_bars} 根，SEPA／Stage 2 至少需要 {required_bars} 根日線",
+            }
+
+        latest = df.iloc[-1]
+        close = float(latest["close"])
+        ma50 = float(latest["MA50"])
+        ma150 = float(latest["MA150"])
+        ma200 = float(latest["MA200"])
+        high_52w = float(df["high"].tail(required_bars).max())
+        low_52w = float(df["low"].tail(required_bars).min())
+        stage_2 = close > ma50 > ma150 > ma200 and ma200 > 0
+
+        recent = df.tail(60).copy()
+        earlier = df.iloc[-120:-60].copy()
+        recent_range = (float(recent["high"].max()) - float(recent["low"].min())) / max(float(recent["close"].mean()), 1e-9)
+        earlier_range = (float(earlier["high"].max()) - float(earlier["low"].min())) / max(float(earlier["close"].mean()), 1e-9)
+        recent_volume = float(recent["volume"].mean())
+        earlier_volume = float(earlier["volume"].mean())
+        vcp = recent_range < earlier_range and recent_volume <= earlier_volume
+
+        base = df.iloc[-51:-1]
+        pivot_price = float(base["high"].max())
+        avg_volume_50 = float(base["volume"].mean())
+        volume_ratio = float(latest["volume"]) / max(avg_volume_50, 1e-9)
+        pivot_confirmed = close >= pivot_price and close <= pivot_price * 1.05 and volume_ratio >= 1.4
+
+        return {
+            "data_status": "available",
+            "history_bars": history_bars,
+            "required_history_bars": required_bars,
+            "ma50": round(ma50, 4),
+            "ma150": round(ma150, 4),
+            "ma200": round(ma200, 4),
+            "high_52w": round(high_52w, 4),
+            "low_52w": round(low_52w, 4),
+            "stage_2": "符合" if stage_2 else "未符合",
+            "sepa": "符合" if stage_2 and close >= high_52w * 0.75 else "未符合",
+            "vcp": "初步符合" if vcp else "未確認",
+            "pivot": "突破確認" if pivot_confirmed else "未觸發",
+            "pivot_price": round(pivot_price, 4),
+            "pivot_volume_ratio": round(volume_ratio, 3),
+            "reason": "以 252 根以上日線計算；VCP 為規則化初篩，非主觀臆測。",
+        }
 
     def _calculate_macd(self, df: pd.DataFrame) -> pd.DataFrame:
         """

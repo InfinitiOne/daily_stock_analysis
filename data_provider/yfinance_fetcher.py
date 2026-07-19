@@ -388,9 +388,9 @@ class YfinanceFetcher(BaseFetcher):
         return None
 
     def _get_us_main_indices(self, yf) -> Optional[List[Dict[str, Any]]]:
-        """获取美股主要指数行情（SPX、IXIC、DJI、VIX），复用 _fetch_yf_ticker_data"""
+        """获取美股主要指数行情（SPX、IXIC、DJI、SOX、VIX），复用 _fetch_yf_ticker_data"""
         # 大盘复盘所需核心美股指数
-        us_indices = ['SPX', 'IXIC', 'DJI', 'VIX']
+        us_indices = ['SPX', 'IXIC', 'DJI', 'SOX', 'VIX']
         results = []
         try:
             for code in us_indices:
@@ -493,10 +493,10 @@ class YfinanceFetcher(BaseFetcher):
         return None
 
     def _get_tw_main_indices(self, yf) -> Optional[List[Dict[str, Any]]]:
-        """获取台湾主要指数行情（加权指数 ^TWII、柜买指数 ^TWOII），复用 _fetch_yf_ticker_data。"""
+        """取得臺灣主要指數行情（加權指數 ^TWII、櫃買指數 ^TWOII）。"""
         tw_indices = {
-            'TWII': ('^TWII', '台湾加权指数'),
-            'TWOII': ('^TWOII', '台湾柜买指数'),
+            'TWII': ('^TWII', '臺灣加權指數'),
+            'TWOII': ('^TWOII', '櫃買指數'),
         }
         results = []
         try:

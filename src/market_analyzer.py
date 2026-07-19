@@ -11,6 +11,7 @@
 """
 
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass, field
@@ -21,7 +22,7 @@ from typing import Optional, Dict, Any, List
 import pandas as pd
 
 from src.config import get_config
-from src.report_language import normalize_report_language
+from src.report_language import ensure_traditional_chinese, is_traditional_chinese_requested, normalize_report_language
 from src.search_service import SearchService
 from src.core.market_profile import get_profile, MarketProfile
 from src.core.market_strategy import get_market_strategy_blueprint
@@ -58,16 +59,21 @@ class MarketIndex:
     """大盘指数数据"""
     code: str                    # 指数代码
     name: str                    # 指数名称
-    current: float = 0.0         # 当前点位
-    change: float = 0.0          # 涨跌点数
-    change_pct: float = 0.0      # 涨跌幅(%)
-    open: float = 0.0            # 开盘点位
-    high: float = 0.0            # 最高点位
-    low: float = 0.0             # 最低点位
-    prev_close: float = 0.0      # 昨收点位
-    volume: float = 0.0          # 成交量（手）
-    amount: float = 0.0          # 成交额（元）
-    amplitude: float = 0.0       # 振幅(%)
+    # ``None`` is materially different from 0.  Public market sources often
+    # publish a valid close but not turnover or intraday OHLC; keeping those
+    # fields optional prevents a provider outage from being misread as a
+    # zero-value market signal.
+    current: Optional[float] = None
+    change: Optional[float] = None
+    change_pct: Optional[float] = None
+    open: Optional[float] = None
+    high: Optional[float] = None
+    low: Optional[float] = None
+    prev_close: Optional[float] = None
+    volume: Optional[float] = None
+    amount: Optional[float] = None
+    amplitude: Optional[float] = None
+    source_fields: Dict[str, str] = field(default_factory=dict)
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -82,6 +88,7 @@ class MarketIndex:
             'volume': self.volume,
             'amount': self.amount,
             'amplitude': self.amplitude,
+            'source_fields': self.source_fields,
         }
 
 
@@ -103,6 +110,9 @@ class MarketOverview:
     bottom_sectors: List[Dict] = field(default_factory=list)  # 跌幅前5板块
     top_concepts: List[Dict] = field(default_factory=list)    # 涨幅前5概念
     bottom_concepts: List[Dict] = field(default_factory=list) # 跌幅前5概念
+    index_source: str = "未取得"
+    core_data_status: str = "unavailable"
+    missing_core_indices: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -140,14 +150,18 @@ class MarketAnalyzer:
         Args:
             search_service: 搜索服务实例
             analyzer: AI分析器实例（用于调用LLM）
-            region: 市场区域 cn=A股 hk=港股 us=美股 jp=日本 kr=韩国
+            region: 市場區域 tw=台股 cn=A股 hk=港股 us=美股 jp=日本 kr=韓國
             config: 本次复盘使用的配置；未传时读取全局配置
         """
         self.config = config or get_config()
         self.search_service = search_service
         self.analyzer = analyzer
         self.data_manager = DataFetcherManager()
-        self.region = region if region in ("cn", "us", "hk", "jp", "kr") else "cn"
+        normalized_region = str(region or "").strip().lower()
+        supported_regions = ("tw", "cn", "us", "hk", "jp", "kr")
+        if normalized_region not in supported_regions:
+            raise ValueError(f"Unsupported market review region: {region}")
+        self.region = normalized_region
         self.profile: MarketProfile = get_profile(self.region)
         self.strategy = get_market_strategy_blueprint(self.region)
 
@@ -158,6 +172,11 @@ class MarketAnalyzer:
         """Return the truthful report language (zh/en/ko) for payload and directives."""
         return normalize_report_language(
             getattr(getattr(self, "config", None), "report_language", "zh")
+        )
+
+    def _uses_traditional_chinese(self) -> bool:
+        return is_traditional_chinese_requested(
+            os.getenv("REPORT_LANGUAGE") or getattr(getattr(self, "config", None), "report_language", "")
         )
 
     def _get_review_language(self) -> str:
@@ -173,6 +192,8 @@ class MarketAnalyzer:
         review_language = review_language or self._get_review_language()
         if self.region == "us":
             return "US market" if review_language == "en" else "美股市场"
+        if self.region == "tw":
+            return "Taiwan market" if review_language == "en" else "台股市場"
         if self.region == "hk":
             return "Hong Kong market" if review_language == "en" else "港股市场"
         if self.region == "jp":
@@ -193,19 +214,25 @@ class MarketAnalyzer:
             return "JPY bn" if self._get_review_language() == "en" else "十亿日元"
         if self.region == "kr":
             return "KRW bn" if self._get_review_language() == "en" else "十亿韩元"
+        if self.region == "tw":
+            return "TWD 100m" if self._get_review_language() == "en" else "億元"
         return "CNY 100m" if self._get_review_language() == "en" else "亿"
 
-    def _format_turnover_value(self, amount_raw: float) -> str:
+    def _format_turnover_value(self, amount_raw: Optional[float]) -> str:
         """Format raw turnover according to market-specific units."""
+        if amount_raw is None:
+            return "N/A" if self._get_review_language() == "en" else "未取得"
         if amount_raw == 0.0:
-            return "N/A"
+            return "N/A" if self._get_review_language() == "en" else "未取得"
         if self.region in ("us", "hk", "jp", "kr"):
             return f"{amount_raw / 1e9:.2f}"
         if amount_raw > 1e6:
             return f"{amount_raw / 1e8:.0f}"
         return f"{amount_raw:.0f}"
 
-    def _get_index_change_arrow(self, change_pct: float) -> str:
+    def _get_index_change_arrow(self, change_pct: Optional[float]) -> str:
+        if change_pct is None:
+            return "⚪"
         if change_pct == 0:
             return "⚪"
         color_scheme = getattr(getattr(self, "config", None), "market_review_color_scheme", "green_up")
@@ -216,6 +243,7 @@ class MarketAnalyzer:
     def _get_review_title(self, date: str) -> str:
         if self._get_review_language() == "en":
             market_names = {
+                "tw": "Taiwan Market Recap",
                 "us": "US Market Recap",
                 "hk": "HK Market Recap",
                 "jp": "Japan Market Recap",
@@ -223,12 +251,15 @@ class MarketAnalyzer:
             }
             market_name = market_names.get(self.region, "A-share Market Recap")
             return f"## {date} {market_name}"
-        return f"## {date} 大盘复盘"
+        titles = {"tw": "台股大盤複盤", "us": "美股大盤複盤", "cn": "A股大盤複盤"}
+        return f"## {date} {titles.get(self.region, '市場複盤')}"
 
     def _get_index_hint(self) -> str:
         if self._get_review_language() == "en":
             if self.region == "us":
-                return "Analyze the key moves in the S&P 500, Nasdaq, Dow, and other major indices."
+                return "Analyze the key moves in the S&P 500, Nasdaq, Philadelphia Semiconductor Index, VIX, and other major indices."
+            if self.region == "tw":
+                return "Analyze the Taiwan Weighted Index and TPEx Index, then connect Taiwan technology sectors with US semiconductor risk appetite."
             if self.region == "hk":
                 return "Analyze the key moves in the HSI, Hang Seng Tech, HSCEI, and other major indices."
             if self.region == "jp":
@@ -433,6 +464,10 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         
         # 1. 获取主要指数行情（按 region 切换 A 股/美股）
         overview.indices = self._get_main_indices()
+        overview.index_source = str(getattr(self, "_last_index_source", "未取得") or "未取得")
+        integrity = self.get_market_data_integrity(overview)
+        overview.core_data_status = str(integrity["status"])
+        overview.missing_core_indices = list(integrity["missing_indices"])
 
         # 2. 获取涨跌统计（A 股有，美股无等效数据）
         if self.profile.has_market_stats:
@@ -456,24 +491,33 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         try:
             logger.info("[大盘] %s action=get_main_indices status=start", self._log_context())
 
-            # 使用 DataFetcherManager 获取指数行情（按 region 切换）
-            data_list = self.data_manager.get_main_indices(region=self.region)
+            # Use the returned provider name so the weekly report can audit
+            # where its market-level conclusion came from.
+            get_with_source = getattr(self.data_manager, "get_main_indices_with_source", None)
+            if callable(get_with_source):
+                data_list, source = get_with_source(region=self.region)
+            else:  # compatibility for injected test doubles
+                data_list, source = self.data_manager.get_main_indices(region=self.region), "DataFetcherManager"
+            self._last_index_source = str(source or "未取得")
 
             if data_list:
                 for item in data_list:
+                    if not isinstance(item, dict):
+                        continue
                     index = MarketIndex(
-                        code=item['code'],
-                        name=item['name'],
-                        current=item['current'],
-                        change=item['change'],
-                        change_pct=item['change_pct'],
-                        open=item['open'],
-                        high=item['high'],
-                        low=item['low'],
-                        prev_close=item['prev_close'],
-                        volume=item['volume'],
-                        amount=item['amount'],
-                        amplitude=item['amplitude']
+                        code=str(item.get('code') or '未取得'),
+                        name=str(item.get('name') or item.get('code') or '未取得'),
+                        current=item.get('current'),
+                        change=item.get('change'),
+                        change_pct=item.get('change_pct'),
+                        open=item.get('open'),
+                        high=item.get('high'),
+                        low=item.get('low'),
+                        prev_close=item.get('prev_close'),
+                        volume=item.get('volume'),
+                        amount=item.get('amount'),
+                        amplitude=item.get('amplitude'),
+                        source_fields=dict(item.get('source_fields') or {}),
                     )
                     indices.append(index)
 
@@ -490,6 +534,46 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
             logger.error("[大盘] %s action=get_main_indices status=failed error=%s", self._log_context(), e)
 
         return indices
+
+    def get_market_data_integrity(self, overview: MarketOverview) -> Dict[str, Any]:
+        """Return an explicit, non-inferential core-index completeness contract."""
+        required = list(getattr(self.profile, "required_index_codes", []) or [])
+        actual = {
+            str(index.code).upper()
+            for index in (overview.indices or [])
+            if self._is_usable_index_current(getattr(index, "current", None))
+        }
+        missing = [code for code in required if code.upper() not in actual]
+        source_status_getter = getattr(
+            getattr(self, "data_manager", None),
+            "get_main_index_source_status",
+            None,
+        )
+        source_status = []
+        if callable(source_status_getter):
+            try:
+                source_status = source_status_getter(self.region)
+            except Exception as exc:
+                logger.debug("[大盤] %s action=get_index_source_status status=failed error=%s", self._log_context(), exc)
+        return {
+            "status": "available" if required and not missing else "unavailable",
+            "required_indices": required,
+            "received_indices": sorted(actual),
+            "missing_indices": missing,
+            "source": str(getattr(self, "_last_index_source", None) or overview.index_source or "未取得"),
+            "source_status": source_status,
+            "data_date": overview.date,
+        }
+
+    @staticmethod
+    def _is_usable_index_current(value: Any) -> bool:
+        """A named index with no price must not satisfy the core-data gate."""
+
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return False
+        return numeric == numeric and numeric > 0
 
     def _get_market_statistics(self, overview: MarketOverview):
         """获取市场涨跌统计"""
@@ -610,6 +694,7 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         search_queries = self.profile.news_queries
         review_language = self._get_review_language()
         market_names = {
+            "tw": "台股市場" if review_language == "zh" else "Taiwan market",
             "cn": "大盘" if review_language == "zh" else "A-share market",
             "us": "美股市场" if review_language == "zh" else "US market",
             "hk": "港股市场" if review_language == "zh" else "HK market",
@@ -682,7 +767,7 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
                 "[大盘] %s action=generate_review status=fallback_template reason=no_analyzer",
                 self._log_context(),
             )
-            return self._generate_template_review(overview, news)
+            return self._finalize_user_report(self._generate_template_review(overview, news))
 
         # 构建 Prompt
         prompt = self._build_review_prompt(overview, news)
@@ -726,13 +811,20 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
                 len(review),
             )
             # Inject structured data tables into LLM prose sections
-            return self._inject_data_into_review(review, overview, news)
+            return self._finalize_user_report(self._inject_data_into_review(review, overview, news))
 
         logger.warning(
             "[大盘] %s action=generate_review status=fallback_template reason=empty_llm_response",
             self._log_context(),
         )
-        return self._generate_template_review(overview, news)
+        return self._finalize_user_report(self._generate_template_review(overview, news))
+
+    def _finalize_user_report(self, report: str) -> str:
+        """Apply the language guarantee at the last user-facing boundary."""
+        return ensure_traditional_chinese(
+            report,
+            os.getenv("REPORT_LANGUAGE") or getattr(self.config, "report_language", ""),
+        )
 
     def _get_analyzer_generation_backend_config_error(self) -> Optional[GenerationError]:
         """Return analyzer backend config errors without relying on dynamic mock attributes."""
@@ -797,6 +889,7 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
             "date": overview.date,
             "market_scope": self._get_market_scope_name(language),
             "indices": [idx.to_dict() for idx in overview.indices],
+            "data_integrity": self.get_market_data_integrity(overview),
             "sectors": {
                 "top": list(overview.top_sectors or []),
                 "bottom": list(overview.bottom_sectors or []),
@@ -1103,10 +1196,11 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
             ]
         for idx in overview.indices:
             arrow = self._get_index_change_arrow(idx.change_pct)
-            amount_raw = idx.amount or 0.0
-            amount_str = self._format_turnover_value(amount_raw)
+            amount_str = self._format_turnover_value(idx.amount)
+            current_str = self._format_optional_number(idx.current)
+            change_str = self._format_signed_pct(idx.change_pct)
             lines.append(
-                f"| {idx.name} | {idx.current:.2f} | {arrow} {idx.change_pct:+.2f}% | "
+                f"| {idx.name} | {current_str} | {arrow} {change_str} | "
                 f"{self._format_optional_number(idx.open)} | {self._format_optional_number(idx.high)} | "
                 f"{self._format_optional_number(idx.low)} | {self._format_optional_pct(idx.amplitude)} | {amount_str} |"
             )
@@ -1204,12 +1298,22 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         return text[: max(0, limit - 3)].rstrip() + "..."
 
     @staticmethod
-    def _format_optional_number(value: float) -> str:
-        return "N/A" if value in (None, 0, 0.0) else f"{value:.2f}"
+    def _format_optional_number(value: Optional[float]) -> str:
+        if value is None:
+            return "N/A"
+        try:
+            return f"{float(value):.2f}"
+        except (TypeError, ValueError):
+            return "N/A"
 
     @staticmethod
-    def _format_optional_pct(value: float) -> str:
-        return "N/A" if value in (None, 0, 0.0) else f"{value:.2f}%"
+    def _format_optional_pct(value: Optional[float]) -> str:
+        if value is None:
+            return "N/A"
+        try:
+            return f"{float(value):.2f}%"
+        except (TypeError, ValueError):
+            return "N/A"
 
     @staticmethod
     def _format_signed_pct(value: Any) -> str:
@@ -1396,12 +1500,22 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         # Korean reuses the English structural template but the model is told to
         # write the entire shell, headings, guidance and conclusion in Korean.
         shell_language_label = "Korean (한국어)" if self._get_output_language() == "ko" else "English"
+        traditional_language_rule = (
+            "- 所有標題、敘述與操作結論一律使用繁體中文與臺灣投資用語；禁止使用簡體中文。\n"
+            if self._uses_traditional_chinese()
+            else ""
+        )
 
         # 指数行情信息（简洁格式，不用emoji）
         indices_text = ""
         for idx in overview.indices:
-            direction = "↑" if idx.change_pct > 0 else "↓" if idx.change_pct < 0 else "-"
-            indices_text += f"- {idx.name}: {idx.current:.2f} ({direction}{abs(idx.change_pct):.2f}%)\n"
+            change_pct = idx.change_pct
+            direction = "↑" if change_pct is not None and change_pct > 0 else "↓" if change_pct is not None and change_pct < 0 else "-"
+            change_display = f"{abs(change_pct):.2f}%" if change_pct is not None else "未取得"
+            indices_text += (
+                f"- {idx.name}: {self._format_optional_number(idx.current)} "
+                f"({direction}{change_display})\n"
+            )
         
         # 板块信息
         top_sectors_text = self._format_ranking_summary(overview.top_sectors)
@@ -1582,6 +1696,7 @@ Output the report content directly, no extra commentary.
 - 禁止输出 JSON 格式
 - 禁止输出代码块
 - emoji 仅在标题处少量使用（每个标题最多1个）
+- {traditional_language_rule.strip()}
 - {workflow_hint}
 - 不要重复列出已由系统注入的表格数据；正文负责解释表格背后的含义
 {data_boundary_requirement}
@@ -1645,7 +1760,7 @@ Output the report content directly, no extra commentary.
             ),
             None,
         )
-        if mood_index:
+        if mood_index and mood_index.change_pct is not None:
             if mood_index.change_pct > 1:
                 market_mood = self._get_market_mood_text("strong_up", template_language)
             elif mood_index.change_pct > 0:
@@ -1660,8 +1775,10 @@ Output the report content directly, no extra commentary.
         # 指数行情（简洁格式）
         indices_text = ""
         for idx in overview.indices[:4]:
-            direction = "↑" if idx.change_pct > 0 else "↓" if idx.change_pct < 0 else "-"
-            indices_text += f"- **{idx.name}**: {idx.current:.2f} ({direction}{abs(idx.change_pct):.2f}%)\n"
+            change_pct = idx.change_pct
+            direction = "↑" if change_pct is not None and change_pct > 0 else "↓" if change_pct is not None and change_pct < 0 else "-"
+            change_display = f"{abs(change_pct):.2f}%" if change_pct is not None else "未取得"
+            indices_text += f"- **{idx.name}**: {self._format_optional_number(idx.current)} ({direction}{change_display})\n"
         
         # 板块信息
         separator = ", " if template_language == "en" else "、"

@@ -923,7 +923,7 @@ class ConfigEnvCompatibilityTestCase(unittest.TestCase):
         )
         self.assertEqual(
             Config._parse_market_review_region("both"),
-            "cn,hk,us,jp,kr",
+            "cn,tw,hk,us,jp,kr",
         )
 
     @patch("src.config.setup_env")

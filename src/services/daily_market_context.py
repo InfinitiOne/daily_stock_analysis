@@ -30,10 +30,10 @@ MARKET_REVIEW_HISTORY_CODE = "MARKET"
 MARKET_REVIEW_REPORT_TYPE = "market_review"
 
 
-_REGION_LABEL_ZH = {"cn": "A股", "hk": "港股", "us": "美股", "jp": "日股", "kr": "韩股"}
-_REGION_LABEL_EN = {"cn": "A-share", "hk": "HK", "us": "US", "jp": "Japan", "kr": "Korea"}
+_REGION_LABEL_ZH = {"tw": "台股", "cn": "A股", "hk": "港股", "us": "美股", "jp": "日股", "kr": "韓股"}
+_REGION_LABEL_EN = {"tw": "Taiwan", "cn": "A-share", "hk": "HK", "us": "US", "jp": "Japan", "kr": "Korea"}
 _VALID_REGIONS = frozenset(_REGION_LABEL_ZH)
-_LEGACY_BOTH_REGIONS = frozenset({"cn", "hk", "us"})
+_LEGACY_BOTH_REGIONS = frozenset({"cn", "tw", "hk", "us"})
 _UNTRUSTED_MARKET_SUMMARY_SENTINELS = (
     "BEGIN_UNTRUSTED_MARKET_SUMMARY",
     "END_UNTRUSTED_MARKET_SUMMARY",

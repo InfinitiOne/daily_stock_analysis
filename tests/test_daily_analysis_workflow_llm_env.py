@@ -143,6 +143,18 @@ def test_daily_analysis_generation_fallback_defaults_to_litellm() -> None:
     )
 
 
+def test_daily_analysis_uses_protected_portfolio_not_stock_list_override() -> None:
+    workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+    env = _load_daily_analysis_env()
+
+    assert "environment: STOCK_LIST" not in workflow_text
+    assert "vars.STOCK_LIST" not in workflow_text
+    assert "secrets.STOCK_LIST" not in workflow_text
+    assert env["JEAC_PORTFOLIO_MODE"] == "true"
+    assert env["MARKET_REVIEW_REGION"] == "tw,us"
+    assert env["REPORT_LANGUAGE"] == "zh-TW"
+
+
 def test_env_example_includes_provider_template_channel_examples() -> None:
     templates = _extract_provider_templates()
     env_example = ENV_EXAMPLE_PATH.read_text(encoding="utf-8")
