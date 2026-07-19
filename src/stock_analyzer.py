@@ -341,6 +341,9 @@ class StockTrendAnalyzer:
                 "data_status": "limited_history",
                 "history_bars": history_bars,
                 "required_history_bars": required_bars,
+                # These four fields remain machine-readable compatibility
+                # values.  ``setup_summary`` below is the user-facing form:
+                # short history is a scope limitation, not a failed analysis.
                 "stage_2": "未取得／暫停判定",
                 "sepa": "未取得／暫停判定",
                 "vcp": "未取得／暫停判定",
@@ -363,6 +366,10 @@ class StockTrendAnalyzer:
                 "short_term_resistance": round(float(short_window["high"].max()), 4),
                 "short_term_support": round(float(short_window["low"].min()), 4),
                 "volume_ratio_5d": round(float(volume_ratio), 3) if volume_ratio is not None else None,
+                "setup_summary": (
+                    f"新上市／短歷史標的（{history_bars} 根日線）：短期趨勢、MA5／10／20、量價、MACD 與 RSI 可分析；"
+                    f"Stage 2／SEPA／VCP／長期 Pivot 不適用，需累積至 {required_bars} 根日線後再評估。"
+                ),
                 "reason": (
                     f"日線已取得 {history_bars} 根，可進行短期趨勢、均線、量價、MACD 與 RSI 分析；"
                     f"SEPA／Stage 2／VCP／Pivot 至少需要 {required_bars} 根日線，故暫停判定"
@@ -407,6 +414,12 @@ class StockTrendAnalyzer:
             "pivot": "突破確認" if pivot_confirmed else "未觸發",
             "pivot_price": round(pivot_price, 4),
             "pivot_volume_ratio": round(volume_ratio, 3),
+            "setup_summary": (
+                f"長週期技術：Stage 2{'成立' if stage_2 else '尚未成立'}；"
+                f"SEPA{'成立' if stage_2 and close >= high_52w * 0.75 else '尚未成立'}；"
+                f"VCP{'初步收斂' if vcp else '尚未形成'}；"
+                f"Pivot{'帶量突破確認' if pivot_confirmed else '尚未觸發'}。"
+            ),
             "reason": "以 252 根以上日線計算；VCP 為規則化初篩，非主觀臆測。",
         }
 
@@ -609,11 +622,24 @@ class StockTrendAnalyzer:
         if result.ma20 > 0 and price >= result.ma20:
             result.support_levels.append(result.ma20)
         
-        # 近期高点作为压力
+        # Always expose auditable reference levels once valid OHLCV exists.
+        # Previously a support was emitted only when price happened to be near
+        # an MA, which made a fully analysed stock look like its data was
+        # missing.  The nearest MA below price (or the rolling low) is a
+        # reference support, not a fabricated trade recommendation.
+        if not result.support_levels:
+            ma_supports = [ma for ma in (result.ma5, result.ma10, result.ma20) if ma > 0 and ma <= price]
+            if ma_supports:
+                result.support_levels.append(max(ma_supports))
+            elif len(df) >= 20:
+                result.support_levels.append(float(df['low'].iloc[-20:].min()))
+
+        # Recent high is a breakout reference even if the latest close equals
+        # that high.  This prevents a misleading blank "resistance" field at
+        # precisely the point where a Minervini-style breakout is assessed.
         if len(df) >= 20:
-            recent_high = df['high'].iloc[-20:].max()
-            if recent_high > price:
-                result.resistance_levels.append(recent_high)
+            recent_high = float(df['high'].iloc[-20:].max())
+            result.resistance_levels.append(recent_high)
 
     def _analyze_macd(self, df: pd.DataFrame, result: TrendAnalysisResult) -> None:
         """
