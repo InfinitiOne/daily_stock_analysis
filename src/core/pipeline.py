@@ -385,6 +385,32 @@ class StockAnalysisPipeline:
         evidence["llm_reason"] = limitation
         score = getattr(trend_result, "signal_score", None)
         trend_value = getattr(getattr(trend_result, "trend_status", None), "value", "未取得／暫停判定")
+        current_price = getattr(trend_result, "current_price", None)
+        ma5 = getattr(trend_result, "ma5", None)
+        ma10 = getattr(trend_result, "ma10", None)
+        ma20 = getattr(trend_result, "ma20", None)
+        supports = list(getattr(trend_result, "support_levels", None) or [])
+        resistances = list(getattr(trend_result, "resistance_levels", None) or [])
+        support = supports[0] if supports else evidence.get("short_term_support")
+        resistance = resistances[0] if resistances else evidence.get("short_term_resistance")
+
+        def _number(value: Any) -> str:
+            try:
+                return f"{float(value):.2f}"
+            except (TypeError, ValueError):
+                return "—"
+
+        setup_summary = str(evidence.get("setup_summary") or "規則化技術條件已計算。")
+        rule_summary = (
+            f"規則化技術結論：{trend_value}；現價 {_number(current_price)}，"
+            f"MA5／10／20 為 {_number(ma5)}／{_number(ma10)}／{_number(ma20)}。{setup_summary}"
+        )
+        action_condition = (
+            f"收盤有效站上 {_number(resistance)} 且量能確認後，才評估進場；"
+            f"跌破 {_number(support)} 則降低曝險。"
+            if support is not None and resistance is not None
+            else "等待價格與量能同步確認，不因 LLM 格式失敗調整部位。"
+        )
         result.sentiment_score = score
         result.trend_prediction = trend_value
         result.operation_advice = "觀察"
@@ -392,21 +418,29 @@ class StockAnalysisPipeline:
         result.action = "watch"
         result.action_label = "觀察"
         result.confidence_level = localize_confidence_level("低", language)
-        result.analysis_summary = limitation
+        result.analysis_summary = rule_summary
         result.key_points = (
             "核心日線與規則化技術指標可用；"
             "不採用未通過格式驗證的 LLM 內容。"
         )
-        result.risk_warning = limitation
-        result.buy_reason = "暫不依 LLM 建立交易決策。"
+        result.risk_warning = f"{limitation} {action_condition}"
+        result.buy_reason = action_condition
         result.dashboard = {
             "core_conclusion": {
-                "one_sentence": limitation,
+                "one_sentence": rule_summary,
                 "signal_type": "規則化技術判定",
                 "time_sensitivity": "待 LLM 服務恢復結構化輸出後更新",
-                "position_advice": {"no_position": "觀察", "has_position": "依既有風險規則管理"},
+                "position_advice": {"no_position": action_condition, "has_position": f"依支撐 {_number(support)} 管理風險。"},
             },
             "data_perspective": {
+                "price_position": {
+                    "current_price": current_price,
+                    "ma5": ma5,
+                    "ma10": ma10,
+                    "ma20": ma20,
+                    "support_level": support,
+                    "resistance_level": resistance,
+                },
                 "trend_status": {
                     "ma_alignment": str(getattr(trend_result, "ma_alignment", "")),
                     "is_bullish": False,
@@ -420,15 +454,15 @@ class StockAnalysisPipeline:
                 # available below; a no-trade stance is explicit here.
                 "position_strategy": {
                     "suggested_position": "觀察",
-                    "entry_plan": "等待資料來源與結構化摘要恢復後，再依支撐／壓力規則評估。",
-                    "risk_control": "不因 LLM 格式失敗新增、減碼或賣出部位。",
+                    "entry_plan": action_condition,
+                    "risk_control": f"不因 LLM 格式失敗新增、減碼或賣出部位；跌破 {_number(support)} 時重新檢查。",
                 },
             },
             "phase_decision": {
                 "phase_context": {"phase": "rule_based_only"},
                 "action_window": "觀察",
                 "immediate_action": "觀察",
-                "watch_conditions": ["等待有效的 LLM JSON 摘要"],
+                "watch_conditions": [action_condition],
                 "next_check_time": "下次報告",
                 "confidence_reason": limitation,
                 "data_limitations": [limitation],
