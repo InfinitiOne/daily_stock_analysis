@@ -1,0 +1,118 @@
+name: JEAC Monthly Investment Review
+
+on:
+  schedule:
+    # The first day at 08:00 Asia/Taipei = 00:00 UTC.  This matches the
+    # ChatGPT "JEAC 每月投資檢討" automation.
+    - cron: "0 0 1 * *"
+  workflow_dispatch:
+    inputs:
+      force_run:
+        description: "Run even if a market calendar reports closed"
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: jeac-monthly-analysis
+  cancel-in-progress: false
+
+jobs:
+  monthly-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(vars.ANALYSIS_TIMEOUT_MINUTES || '45') }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Load protected current portfolio master
+        env:
+          JEAC_CURRENT_PORTFOLIO_MARKDOWN: ${{ secrets.JEAC_CURRENT_PORTFOLIO_MARKDOWN }}
+        run: |
+          if [ -z "$JEAC_CURRENT_PORTFOLIO_MARKDOWN" ]; then
+            echo "JEAC_CURRENT_PORTFOLIO_MARKDOWN is not configured."
+            exit 1
+          fi
+          printf '%s\n' "$JEAC_CURRENT_PORTFOLIO_MARKDOWN" > 08-01_Current_Portfolio.md
+          chmod 600 08-01_Current_Portfolio.md
+      - name: Generate monthly report
+        env:
+          # Monthly mode shares the weekly evidence gate: Taiwan market,
+          # Taiwan holdings, US market and US holdings must all be complete.
+          JEAC_MONTHLY_PORTFOLIO_MODE: "true"
+          JEAC_MONTHLY_CANDIDATE_LIST: ${{ vars.JEAC_MONTHLY_CANDIDATE_LIST || vars.JEAC_WEEKLY_CANDIDATE_LIST }}
+          JEAC_MONTHLY_HISTORY_DAYS: "420"
+          JEAC_REQUIRE_MARKET_CORE_DATA: "true"
+          JEAC_REPORT_KIND: monthly
+          REPORT_TYPE: full
+          REPORT_LANGUAGE: "zh-TW"
+          MARKET_REVIEW_ENABLED: ${{ vars.MARKET_REVIEW_ENABLED || 'true' }}
+          # Keep the Taiwan-first document order: Taiwan market -> Taiwan
+          # holdings -> US market -> US holdings.
+          MARKET_REVIEW_REGION: "tw,us"
+
+          # LLM and research sources
+          LITELLM_CONFIG: ${{ vars.LITELLM_CONFIG || secrets.LITELLM_CONFIG }}
+          LITELLM_CONFIG_YAML: ${{ vars.LITELLM_CONFIG_YAML || secrets.LITELLM_CONFIG_YAML }}
+          LITELLM_MODEL: ${{ vars.LITELLM_MODEL || secrets.LITELLM_MODEL }}
+          LLM_CHANNELS: ${{ vars.LLM_CHANNELS || 'groq' }}
+          LLM_GROQ_PROTOCOL: ${{ vars.LLM_GROQ_PROTOCOL || 'openai' }}
+          LLM_GROQ_BASE_URL: ${{ vars.LLM_GROQ_BASE_URL || 'https://api.groq.com/openai/v1' }}
+          LLM_GROQ_API_KEYS: ${{ secrets.LLM_GROQ_API_KEYS }}
+          LLM_GROQ_MODELS: ${{ vars.LLM_GROQ_MODELS || 'llama-3.3-70b-versatile' }}
+          LLM_GROQ_ENABLED: ${{ vars.LLM_GROQ_ENABLED || 'true' }}
+          ANALYSIS_PROMPT_PROFILE: ${{ vars.ANALYSIS_PROMPT_PROFILE || 'compact' }}
+          ANALYSIS_MAX_OUTPUT_TOKENS: ${{ vars.ANALYSIS_MAX_OUTPUT_TOKENS || '2400' }}
+          FUGLE_API_KEY: ${{ secrets.FUGLE_API_KEY }}
+          FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
+          BOCHA_API_KEYS: ${{ secrets.BOCHA_API_KEYS }}
+          TAVILY_API_KEYS: ${{ secrets.TAVILY_API_KEYS }}
+          SERPAPI_API_KEYS: ${{ secrets.SERPAPI_API_KEYS }}
+          MINIMAX_API_KEYS: ${{ secrets.MINIMAX_API_KEYS }}
+          BRAVE_API_KEYS: ${{ secrets.BRAVE_API_KEYS }}
+          SEARXNG_BASE_URLS: ${{ vars.SEARXNG_BASE_URLS || secrets.SEARXNG_BASE_URLS }}
+          SEARXNG_PUBLIC_INSTANCES_ENABLED: ${{ vars.SEARXNG_PUBLIC_INSTANCES_ENABLED || secrets.SEARXNG_PUBLIC_INSTANCES_ENABLED || 'true' }}
+          NEWS_INTEL_AUTO_FETCH_ENABLED: ${{ vars.NEWS_INTEL_AUTO_FETCH_ENABLED || 'true' }}
+
+          # Private document delivery.  The Markdown, DOCX and PPTX stay out
+          # of public artifacts and are uploaded only to this Drive folder.
+          PRIVATE_REPORT_EXPORT_ENABLED: ${{ vars.PRIVATE_REPORT_EXPORT_ENABLED || 'false' }}
+          GOOGLE_DRIVE_REPORT_FOLDER_ID: ${{ vars.GOOGLE_DRIVE_REPORT_FOLDER_ID }}
+          GOOGLE_DRIVE_AUTH_MODE: ${{ vars.GOOGLE_DRIVE_AUTH_MODE || 'service_account' }}
+          GOOGLE_DRIVE_OAUTH_CLIENT_JSON: ${{ secrets.GOOGLE_DRIVE_OAUTH_CLIENT_JSON }}
+          GOOGLE_DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.GOOGLE_DRIVE_OAUTH_TOKEN_JSON }}
+          GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON }}
+
+          # Optional delivery channels.  Configure any one of these in
+          # GitHub Secrets/Variables to receive the GitHub-generated report.
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_MESSAGE_THREAD_ID: ${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}
+          EMAIL_SENDER: ${{ vars.EMAIL_SENDER || secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECEIVERS: ${{ vars.EMAIL_RECEIVERS || secrets.EMAIL_RECEIVERS }}
+          PUSHOVER_USER_KEY: ${{ secrets.PUSHOVER_USER_KEY }}
+          PUSHOVER_API_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
+          NTFY_URL: ${{ secrets.NTFY_URL }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          NOTIFICATION_REPORT_CHANNELS: ${{ vars.NOTIFICATION_REPORT_CHANNELS || secrets.NOTIFICATION_REPORT_CHANNELS }}
+          NOTIFICATION_TIMEZONE: "Asia/Taipei"
+        run: python main.py --force-run
+      - name: Upload limited diagnostics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          # Never upload reports/: completed documents live only in the
+          # private Google Drive folder configured above.
+          name: jeac-monthly-diagnostics-${{ github.run_number }}
+          path: logs/
+          retention-days: 14
+          if-no-files-found: warn
