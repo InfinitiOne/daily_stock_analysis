@@ -57,9 +57,13 @@ class DailyRequestBudget:
             except (TypeError, ValueError):
                 return default
 
+        # Alpha Vantage's free plan is capped at 25/day.  A repository
+        # variable may lower the budget for testing, but must never weaken the
+        # provider-side safety limit by raising it above 25.
+        configured_limit = max(0, _int("ALPHAVANTAGE_MAX_REQUESTS_PER_DAY", 25))
         return cls(
             os.getenv("ALPHAVANTAGE_BUDGET_FILE", "data/provider_budget/alphavantage.json"),
-            daily_limit=_int("ALPHAVANTAGE_MAX_REQUESTS_PER_DAY", 25),
+            daily_limit=min(25, configured_limit),
             timezone_name=os.getenv("ALPHAVANTAGE_BUDGET_TIMEZONE", "UTC").strip() or "UTC",
         )
 
@@ -138,5 +142,4 @@ class DailyRequestBudget:
             used += count
             self._write_state(bucket, used)
             return BudgetReservation(True, used, self.daily_limit - used, bucket)
-
 
