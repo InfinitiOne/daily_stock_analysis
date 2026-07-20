@@ -29,6 +29,7 @@ from src.services.run_diagnostics import (
     record_history_run,
     record_notification_run,
 )
+from src.services.same_day_reuse import cache_marker, report_kind as same_day_report_kind
 from src.schemas.market_light import MARKET_LIGHT_REGIONS
 
 
@@ -855,6 +856,7 @@ def _persist_market_review_history(
             "report_kind": MARKET_REVIEW_REPORT_TYPE,
             "market_review_region": region,
             "report_language": report_language,
+            "same_day_reuse": cache_marker(kind=same_day_report_kind()),
         }
         if market_light_snapshots:
             context_snapshot["market_light_snapshots"] = market_light_snapshots
