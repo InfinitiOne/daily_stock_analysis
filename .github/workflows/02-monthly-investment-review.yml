@@ -58,7 +58,7 @@ jobs:
           JEAC_MONTHLY_HISTORY_DAYS: "420"
           JEAC_REQUIRE_MARKET_CORE_DATA: "true"
           JEAC_REPORT_KIND: monthly
-          JEAC_SAME_DAY_REUSE_ENABLED: "true"
+          JEAC_SAME_DAY_REUSE_ENABLED: ${{ vars.JEAC_SAME_DAY_REUSE_ENABLED || 'true' }}
           JEAC_SAME_DAY_REUSE_DATE: ${{ steps.report-date.outputs.value }}
           REPORT_TYPE: full
           REPORT_LANGUAGE: "zh-TW"
