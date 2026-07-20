@@ -115,7 +115,7 @@ jobs:
           LLM_TEMPERATURE: ${{ vars.LLM_TEMPERATURE || secrets.LLM_TEMPERATURE }}
           # 精简 JEAC 例行分析的输入/输出；可将 Variable 改为 standard 恢复完整提示词。
           ANALYSIS_PROMPT_PROFILE: ${{ vars.ANALYSIS_PROMPT_PROFILE || 'compact' }}
-          ANALYSIS_MAX_OUTPUT_TOKENS: ${{ vars.DAILY_ANALYSIS_MAX_OUTPUT_TOKENS || '1600' }}
+          ANALYSIS_MAX_OUTPUT_TOKENS: ${{ vars.DAILY_ANALYSIS_MAX_OUTPUT_TOKENS || '2000' }}
           # Bound a degraded provider instead of allowing one stock to block
           # the serial daily portfolio run for several minutes.
           LLM_REQUEST_TIMEOUT_SECONDS: ${{ vars.DAILY_LLM_REQUEST_TIMEOUT_SECONDS || '30' }}
@@ -124,7 +124,7 @@ jobs:
           # are cooling down.  Rule-based OHLCV analysis remains available.
           LLM_RATE_LIMIT_MAX_RETRIES: ${{ vars.DAILY_LLM_RATE_LIMIT_MAX_RETRIES || '0' }}
           LLM_RATE_LIMIT_MAX_WAIT_SECONDS: ${{ vars.DAILY_LLM_RATE_LIMIT_MAX_WAIT_SECONDS || '5' }}
-          REPORT_INTEGRITY_RETRY: ${{ vars.REPORT_INTEGRITY_RETRY || '0' }}
+          REPORT_INTEGRITY_RETRY: ${{ vars.REPORT_INTEGRITY_RETRY || '1' }}
           LLM_USAGE_HMAC_SECRET: ${{ secrets.LLM_USAGE_HMAC_SECRET }}
           LLM_USAGE_HMAC_KEY_VERSION: ${{ vars.LLM_USAGE_HMAC_KEY_VERSION || secrets.LLM_USAGE_HMAC_KEY_VERSION }}
           LLM_PROMPT_CACHE_TELEMETRY_ENABLED: ${{ vars.LLM_PROMPT_CACHE_TELEMETRY_ENABLED || secrets.LLM_PROMPT_CACHE_TELEMETRY_ENABLED }}
@@ -320,7 +320,7 @@ jobs:
           TICKFLOW_BATCH_SIZE: ${{ vars.TICKFLOW_BATCH_SIZE || secrets.TICKFLOW_BATCH_SIZE }}
           # Fugle Market Data（仅台股 .TW/.TWO；未设置时自动回退到 Yahoo Finance）
           FUGLE_API_KEY: ${{ secrets.FUGLE_API_KEY }}
-          FUGLE_PRIORITY: ${{ vars.FUGLE_PRIORITY || '0' }}
+          FUGLE_PRIORITY: ${{ vars.FUGLE_PRIORITY || '8' }}
           FUGLE_TIMEOUT_SECONDS: ${{ vars.FUGLE_TIMEOUT_SECONDS || '12' }}
           # FinMind（台股日线与结构化基本面/筹码资料；不设则不调用）
           FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
@@ -365,7 +365,7 @@ jobs:
           MINIMAX_API_KEYS: ${{ secrets.MINIMAX_API_KEYS }}
           BRAVE_API_KEYS: ${{ secrets.BRAVE_API_KEYS }}
           SEARXNG_BASE_URLS: ${{ vars.SEARXNG_BASE_URLS || secrets.SEARXNG_BASE_URLS }}
-          SEARXNG_PUBLIC_INSTANCES_ENABLED: ${{ vars.SEARXNG_PUBLIC_INSTANCES_ENABLED || secrets.SEARXNG_PUBLIC_INSTANCES_ENABLED }}
+          SEARXNG_PUBLIC_INSTANCES_ENABLED: ${{ vars.SEARXNG_PUBLIC_INSTANCES_ENABLED || secrets.SEARXNG_PUBLIC_INSTANCES_ENABLED || 'false' }}
           
           # ==========================================
           # 通知渠道（可同时配置多个，全部推送）
