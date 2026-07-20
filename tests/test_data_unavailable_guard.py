@@ -104,6 +104,35 @@ def test_llm_schema_failure_preserves_rule_based_core_data_for_weekly_integrity(
     assert result.technical_evidence["llm_status"] == "schema_validation_failed"
 
 
+def test_llm_provider_outage_preserves_rule_based_core_data() -> None:
+    failed = AnalysisResult(
+        code="NVDA",
+        name="NVIDIA",
+        sentiment_score=50,
+        trend_prediction="震盪",
+        operation_advice="持有",
+        success=False,
+        error_message="All LLM models failed: No deployments available for selected model",
+    )
+    trend = TrendAnalysisResult(
+        code="NVDA",
+        signal_score=61,
+        technical_evidence={"data_status": "available", "history_bars": 420},
+    )
+    pipeline = StockAnalysisPipeline.__new__(StockAnalysisPipeline)
+
+    result = pipeline._preserve_rule_based_result_after_llm_schema_failure(
+        failed,
+        trend_result=trend,
+        report_language="zh-TW",
+    )
+
+    assert result.success is True
+    assert result.data_status == "available"
+    assert result.technical_evidence["llm_status"] == "provider_unavailable"
+    assert "LLM" not in result.risk_warning
+
+
 def test_schema_validation_failed_marker_also_preserves_rule_based_result() -> None:
     failed = AnalysisResult(
         code="00403A.TW",
