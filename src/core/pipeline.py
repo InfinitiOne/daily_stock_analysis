@@ -942,6 +942,7 @@ class StockAnalysisPipeline:
                 market=market or "cn",
             )
             news_result_count: Optional[int] = None
+            news_search_completed: Optional[bool] = None
             self._emit_progress(46, f"{stock_name}：正在检索新闻与舆情")
             if self.search_service is not None and self.search_service.is_available:
                 logger.info(f"{stock_name}({code}) 开始多维度情报搜索...")
@@ -951,6 +952,10 @@ class StockAnalysisPipeline:
                     stock_code=code,
                     stock_name=stock_name,
                     max_searches=5
+                )
+                news_search_completed = bool(intel_results) and all(
+                    bool(response and response.success)
+                    for response in intel_results.values()
                 )
 
                 # 格式化情报报告
@@ -1199,6 +1204,7 @@ class StockAnalysisPipeline:
                         enhanced_context=enhanced_context,
                         news_content=news_context,
                         news_result_count=news_result_count,
+                        news_search_completed=news_search_completed,
                         realtime_quote=realtime_quote,
                         chip_data=chip_data,
                         analysis_context_pack_overview=analysis_context_pack_overview,
@@ -2809,6 +2815,7 @@ class StockAnalysisPipeline:
         realtime_quote: Any,
         chip_data: Optional[ChipDistribution],
         news_result_count: Optional[int] = None,
+        news_search_completed: Optional[bool] = None,
         analysis_context_pack_overview: Optional[Dict[str, Any]] = None,
         market_phase_summary: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
@@ -2834,6 +2841,8 @@ class StockAnalysisPipeline:
             snapshot["news_retrieval_content"] = news_content
         if news_result_count is not None:
             snapshot["news_result_count"] = news_result_count
+        if news_search_completed is not None:
+            snapshot["news_search_completed"] = bool(news_search_completed)
         if analysis_context_pack_overview is not None:
             snapshot["analysis_context_pack_overview"] = analysis_context_pack_overview
         if market_phase_summary is not None:
