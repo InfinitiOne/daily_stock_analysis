@@ -170,6 +170,23 @@ class TwseTpexFetcher(BaseFetcher):
                 }
         return None
 
+    def get_stock_name(self, stock_code: str) -> Optional[str]:
+        """Resolve a Taiwan security's Traditional Chinese name from its exchange.
+
+        This uses the same official end-of-day quote endpoint as the public
+        fallback, so the report display name stays Chinese even when a later
+        Yahoo Finance quote supplies an English issuer name.
+        """
+        normalized = (stock_code or "").strip().upper()
+        try:
+            row = self._official_latest_quote_row(normalized)
+        except DataFetchError as exc:
+            logger.warning("[TWSE/TPEx] official name unavailable for %s: %s", normalized, exc)
+            return None
+
+        name = str((row or {}).get("name") or "").strip()
+        return name or None
+
     def get_realtime_quote(self, stock_code: str) -> Optional[UnifiedRealtimeQuote]:
         """Use official end-of-day data when Taiwan quote APIs are unavailable.
 
