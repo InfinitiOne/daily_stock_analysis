@@ -5,6 +5,7 @@ import pytest
 from src.llm.errors import (
     call_litellm_with_rate_limit_recovery,
     get_litellm_retry_after_seconds,
+    is_litellm_global_capacity_error,
     is_litellm_rate_limit_error,
 )
 
@@ -14,6 +15,22 @@ def test_rate_limit_retry_after_is_detected() -> None:
 
     assert is_litellm_rate_limit_error(error) is True
     assert get_litellm_retry_after_seconds(error) == pytest.approx(19.715)
+
+
+def test_global_deployment_unavailable_is_not_retried() -> None:
+    error = RuntimeError("No deployments available for selected model, Try again in 936 seconds")
+    sleep_calls = []
+
+    assert is_litellm_global_capacity_error(error) is True
+    with pytest.raises(RuntimeError, match="No deployments available"):
+        call_litellm_with_rate_limit_recovery(
+            lambda _kwargs: (_ for _ in ()).throw(error),
+            model="groq",
+            call_kwargs={},
+            max_rate_limit_retries=2,
+            sleep=sleep_calls.append,
+        )
+    assert sleep_calls == []
 
 
 def test_rate_limit_recovery_waits_then_retries() -> None:
