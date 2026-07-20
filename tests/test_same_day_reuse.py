@@ -30,7 +30,11 @@ def test_same_day_analysis_accepts_only_complete_payload(monkeypatch) -> None:
     monkeypatch.setenv("JEAC_SAME_DAY_REUSE_ENABLED", "true")
     monkeypatch.setenv("JEAC_REPORT_KIND", "daily")
     monkeypatch.setenv("JEAC_SAME_DAY_REUSE_DATE", "2026-07-20")
-    snapshot = {"same_day_reuse": cache_marker(kind="daily"), "news_result_count": 2}
+    snapshot = {
+        "same_day_reuse": cache_marker(kind="daily"),
+        "news_result_count": 2,
+        "news_search_completed": True,
+    }
 
     assert analysis_payload_is_complete(_complete_payload(), snapshot)
 
@@ -39,7 +43,11 @@ def test_same_day_analysis_rejects_rule_only_llm_fallback(monkeypatch) -> None:
     monkeypatch.setenv("JEAC_SAME_DAY_REUSE_DATE", "2026-07-20")
     payload = _complete_payload()
     payload["technical_evidence"]["llm_status"] = "provider_unavailable"
-    snapshot = {"same_day_reuse": cache_marker(kind="daily"), "news_result_count": 0}
+    snapshot = {
+        "same_day_reuse": cache_marker(kind="daily"),
+        "news_result_count": 0,
+        "news_search_completed": True,
+    }
 
     assert not analysis_payload_is_complete(payload, snapshot)
 
@@ -52,6 +60,7 @@ def test_pipeline_restores_complete_same_day_result(monkeypatch) -> None:
     snapshot = {
         "same_day_reuse": cache_marker(kind="daily"),
         "news_result_count": 1,
+        "news_search_completed": True,
         "enhanced_context": {"fundamental_context": {"status": "available"}},
     }
     row = SimpleNamespace(
