@@ -96,7 +96,9 @@ jobs:
           LLM_OPENROUTER_MAX_REQUESTS_PER_RUN: ${{ vars.MONTHLY_OPENROUTER_MAX_REQUESTS_PER_RUN || '12' }}
           ANALYSIS_PROMPT_PROFILE: ${{ vars.ANALYSIS_PROMPT_PROFILE || 'compact' }}
           ANALYSIS_MAX_OUTPUT_TOKENS: ${{ vars.ANALYSIS_MAX_OUTPUT_TOKENS || '2400' }}
+          REPORT_INTEGRITY_RETRY: ${{ vars.REPORT_INTEGRITY_RETRY || '1' }}
           FUGLE_API_KEY: ${{ secrets.FUGLE_API_KEY }}
+          FUGLE_PRIORITY: ${{ vars.FUGLE_PRIORITY || '8' }}
           FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
@@ -110,7 +112,7 @@ jobs:
           MINIMAX_API_KEYS: ${{ secrets.MINIMAX_API_KEYS }}
           BRAVE_API_KEYS: ${{ secrets.BRAVE_API_KEYS }}
           SEARXNG_BASE_URLS: ${{ vars.SEARXNG_BASE_URLS || secrets.SEARXNG_BASE_URLS }}
-          SEARXNG_PUBLIC_INSTANCES_ENABLED: ${{ vars.SEARXNG_PUBLIC_INSTANCES_ENABLED || secrets.SEARXNG_PUBLIC_INSTANCES_ENABLED || 'true' }}
+          SEARXNG_PUBLIC_INSTANCES_ENABLED: ${{ vars.SEARXNG_PUBLIC_INSTANCES_ENABLED || secrets.SEARXNG_PUBLIC_INSTANCES_ENABLED || 'false' }}
           NEWS_INTEL_AUTO_FETCH_ENABLED: ${{ vars.NEWS_INTEL_AUTO_FETCH_ENABLED || 'true' }}
 
           # Private document delivery.  The Markdown, DOCX and PPTX stay out
