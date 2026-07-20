@@ -48,6 +48,18 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
+
+      - name: 解析台北報告日期
+        id: report-date
+        run: echo "value=$(TZ=Asia/Taipei date +%F)" >> "$GITHUB_OUTPUT"
+
+      - name: 還原同日分析狀態
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: jeac-same-day-daily-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
+          restore-keys: |
+            jeac-same-day-daily-${{ steps.report-date.outputs.value }}-
       
       - name: 安装依赖
         run: |
@@ -453,6 +465,8 @@ jobs:
           GOOGLE_DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.GOOGLE_DRIVE_OAUTH_TOKEN_JSON }}
           GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON }}
           JEAC_REPORT_KIND: daily
+          JEAC_SAME_DAY_REUSE_ENABLED: "true"
+          JEAC_SAME_DAY_REUSE_DATE: ${{ steps.report-date.outputs.value }}
           # 所有對使用者的日報、DOCX 與 PPTX 均輸出臺灣繁體中文。
           REPORT_LANGUAGE: "zh-TW"
           REPORT_SHOW_LLM_MODEL: ${{ vars.REPORT_SHOW_LLM_MODEL || secrets.REPORT_SHOW_LLM_MODEL || 'true' }}
@@ -582,6 +596,13 @@ jobs:
           else
             python main.py $FORCE_RUN_ARG
           fi
+
+      - name: 保存同日分析狀態
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: jeac-same-day-daily-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
       
       - name: 上传受限诊断信息
         uses: actions/upload-artifact@v6
