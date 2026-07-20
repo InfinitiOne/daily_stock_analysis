@@ -60,11 +60,15 @@ class FugleFetcher(BaseFetcher):
         self._api_key = (api_key if api_key is not None else os.getenv("FUGLE_API_KEY", "")).strip()
         self.priority = int(priority if priority is not None else _env_number("FUGLE_PRIORITY", 0))
         self._timeout_seconds = max(1.0, _env_number("FUGLE_TIMEOUT_SECONDS", 12.0))
+        # Authentication or subscription-plan denials cannot recover within
+        # one workflow run.  Suppress repeat requests and let FinMind/TWSE
+        # handle the rest of the Taiwan portfolio.
+        self._permanently_unavailable_reason = ""
         self._session = session or requests.Session()
 
     def is_available(self, capability: str = "") -> bool:
-        """Only register Fugle when a key is present; do not probe the remote API."""
-        return bool(self._api_key)
+        """Register Fugle only while credentials are usable in this run."""
+        return bool(self._api_key) and not self._permanently_unavailable_reason
 
     @staticmethod
     def _symbol(stock_code: str) -> str:
@@ -76,6 +80,8 @@ class FugleFetcher(BaseFetcher):
     def _request(self, path: str, *, params: Optional[dict[str, Any]] = None) -> Any:
         if not self._api_key:
             raise DataFetchError("[Fugle] API key is not configured")
+        if self._permanently_unavailable_reason:
+            raise DataFetchError(self._permanently_unavailable_reason)
 
         try:
             response = self._session.get(
@@ -88,7 +94,14 @@ class FugleFetcher(BaseFetcher):
             raise DataFetchError(f"[Fugle] request failed: {type(exc).__name__}") from exc
 
         if response.status_code in (401, 403):
-            raise DataFetchError("[Fugle] authentication or plan permission was rejected")
+            self._permanently_unavailable_reason = (
+                "[Fugle] authentication or plan permission was rejected"
+            )
+            logger.warning(
+                "[Fugle] disabling provider for the remainder of this run after HTTP %s",
+                response.status_code,
+            )
+            raise DataFetchError(self._permanently_unavailable_reason)
         if response.status_code == 429:
             raise DataFetchError("[Fugle] rate limit reached")
         try:
