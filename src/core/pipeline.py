@@ -744,8 +744,11 @@ class StockAnalysisPipeline:
                 if self.config.enable_realtime_quote:
                     realtime_quote = self.fetcher_manager.get_realtime_quote(code, log_final_failure=False)
                     if realtime_quote:
-                        # 使用实时行情返回的真实股票名称
-                        if realtime_quote.name:
+                        # 台股以 TWSE／TPEx 的繁體中文名稱為報告主名稱；
+                        # Yahoo Finance 名稱僅作行情來源，不得覆蓋已驗證的官方名稱。
+                        if realtime_quote.name and not (
+                            market == "tw" and is_meaningful_stock_name(stock_name, code)
+                        ):
                             stock_name = realtime_quote.name
                         # 兼容不同数据源的字段（有些数据源可能没有 volume_ratio）
                         volume_ratio = getattr(realtime_quote, 'volume_ratio', None)
