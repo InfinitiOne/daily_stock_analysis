@@ -7,4 +7,4 @@
 - 本目录中的 skill 需要与 `AGENTS.md` 保持一致
 - `.claude/reviews/` 属于本地分析产物，不作为规则真源
 
-如果未来需要兼容其他 agent 目录（如 `.agents/skills/` 或 `.github/skills/`），应先明确单一真源，再通过脚本或镜像同步，而不是手工长期维护多份同义内容。
+本目录是唯一真源。要部署五个 `jeac-*` Skills 至 Claude、Codex 或相容 Agent，使用仓库根目录的 `scripts/sync_agent_skills.py`；Codex 使用 `~/.agents/skills`，网页 ChatGPT 使用由 `--target plugin --apply` 生成的 Plugin bundle。脚本只会从本目录单向复制，绝不从目标目录反向覆盖真源。

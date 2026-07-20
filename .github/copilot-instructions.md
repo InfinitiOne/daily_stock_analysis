@@ -35,4 +35,4 @@ If any instruction in this file conflicts with `AGENTS.md`, follow `AGENTS.md`.
 - `AGENTS.md` is the single source of truth for repository AI collaboration rules.
 - `CLAUDE.md` must remain a symlink to `AGENTS.md`.
 - Use `.github/instructions/*.instructions.md` for path-specific guidance.
-- Current repository collaboration skills live in `.claude/skills/`; keep them aligned with `AGENTS.md`.
+- Current repository collaboration skills live in `.claude/skills/`; this is the sole version-controlled source. Use `python scripts/sync_agent_skills.py --target claude|codex --apply` for one-way local installation, or `--target plugin --apply` to refresh the versioned web Plugin bundle. Never reverse-sync a target into the repository.

@@ -1,0 +1,19 @@
+{
+  "digests": {
+    "jeac-backtest-validation": "2e1e20d8609cafc0b1a608fea455a1303a8a15efbc36c7db8474540b763a7c0a",
+    "jeac-data-quality": "5493485d9d0aa2983122df1b176a538f40700455f19c1425063c5421652f9d22",
+    "jeac-news-intel": "cb4296cdb90dfe8626b188cd1c263bd433216d0bbd39bb671c8326008c7398fc",
+    "jeac-portfolio-risk": "01d0f60dff74f463aeea9006d850b973c2d3dde496e701f1aa39df6c23c2b015",
+    "jeac-sepa-swing": "2d1131d956ca95caffd0075fd9b7ec59973b625528f6e20f09e3613191234b8d"
+  },
+  "managed_by": "scripts/sync_agent_skills.py",
+  "schema_version": 1,
+  "skills": [
+    "jeac-backtest-validation",
+    "jeac-data-quality",
+    "jeac-news-intel",
+    "jeac-portfolio-risk",
+    "jeac-sepa-swing"
+  ],
+  "source": ".claude/skills"
+}
