@@ -3087,6 +3087,25 @@ Sector text.
         assert snapshot["dimensions"]["index"]["available"] is True
         assert snapshot["dimensions"]["limit"] == {"score": 50, "available": False}
 
+    def test_market_light_snapshot_accepts_taiwan_region(self):
+        from src.core.market_profile import TW_PROFILE
+        from src.market_analyzer import MarketIndex, MarketOverview
+
+        ma = self._make_market_analyzer_with_mock_generate_text(return_value="review")
+        ma.region = "tw"
+        ma.profile = TW_PROFILE
+        overview = MarketOverview(
+            date="2026-03-06",
+            indices=[MarketIndex(code="TWII", name="加權指數", current=23000, change_pct=0.5)],
+            up_count=900,
+            down_count=600,
+        )
+
+        snapshot = ma.build_market_light_snapshot(overview)
+
+        assert snapshot["region"] == "tw"
+        assert snapshot["data_quality"] == "partial"
+
     @pytest.mark.parametrize(
         ("region", "profile_name", "index_code", "index_name"),
         [
