@@ -17,6 +17,7 @@ import requests
 
 from .base import BaseFetcher, DataFetchError, STANDARD_COLUMNS
 from .realtime_types import UnifiedRealtimeQuote, RealtimeSource
+from .request_budget import DailyRequestBudget
 from .us_index_mapping import is_us_stock_code
 
 logger = logging.getLogger(__name__)
@@ -32,8 +33,22 @@ class AlphaVantageFetcher(BaseFetcher):
         from src.config import get_config
         config = get_config()
         self._api_key = getattr(config, 'alphavantage_api_key', None) or os.getenv('ALPHAVANTAGE_API_KEY')
+        self._budget = DailyRequestBudget.from_env()
+        self._name_lookup_enabled = os.getenv('ALPHAVANTAGE_NAME_LOOKUP_ENABLED', 'false').strip().lower() in {
+            '1', 'true', 'yes', 'on'
+        }
         if not self._api_key:
             logger.debug("[AlphaVantage] API key not configured, fetcher disabled")
+
+    def _request(self, params: dict, timeout: int):
+        reservation = self._budget.try_reserve()
+        if not reservation.allowed:
+            raise DataFetchError(
+                f"[AlphaVantage] daily request budget exhausted: "
+                f"{reservation.used}/{self._budget.daily_limit} "
+                f"({reservation.bucket}, {self._budget.timezone_name})"
+            )
+        return requests.get(_AV_BASE_URL, params=params, timeout=timeout)
 
     def _is_us_stock(self, stock_code: str) -> bool:
         return is_us_stock_code(stock_code)
@@ -54,7 +69,7 @@ class AlphaVantageFetcher(BaseFetcher):
 
         try:
             self.random_sleep(0.5, 1.5)
-            resp = requests.get(_AV_BASE_URL, params=params, timeout=30)
+            resp = self._request(params, timeout=30)
             resp.raise_for_status()
             data = resp.json()
         except Exception as e:
@@ -120,7 +135,7 @@ class AlphaVantageFetcher(BaseFetcher):
         symbol = stock_code.strip().upper()
         try:
             self.random_sleep(0.5, 1.5)
-            resp = requests.get(_AV_BASE_URL, params={
+            resp = self._request({
                 'function': 'GLOBAL_QUOTE',
                 'symbol': symbol,
                 'apikey': self._api_key,
@@ -159,12 +174,12 @@ class AlphaVantageFetcher(BaseFetcher):
         )
 
     def get_stock_name(self, stock_code: str) -> Optional[str]:
-        if not self._api_key or not self._is_us_stock(stock_code):
+        if not self._name_lookup_enabled or not self._api_key or not self._is_us_stock(stock_code):
             return None
 
         symbol = stock_code.strip().upper()
         try:
-            resp = requests.get(_AV_BASE_URL, params={
+            resp = self._request({
                 'function': 'SYMBOL_SEARCH',
                 'keywords': symbol,
                 'apikey': self._api_key,
@@ -179,3 +194,4 @@ class AlphaVantageFetcher(BaseFetcher):
             if match.get('1. symbol') == symbol and match.get('2. name'):
                 return match['2. name']
         return None
+
