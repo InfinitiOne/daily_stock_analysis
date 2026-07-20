@@ -48,7 +48,7 @@ jobs:
             jeac-provider-budget-alphavantage-${{ steps.report-date.outputs.value }}-
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Load protected current portfolio master
+      - name: Build runner-only portfolio master from Secret
         env:
           JEAC_CURRENT_PORTFOLIO_MARKDOWN: ${{ secrets.JEAC_CURRENT_PORTFOLIO_MARKDOWN }}
         run: |
