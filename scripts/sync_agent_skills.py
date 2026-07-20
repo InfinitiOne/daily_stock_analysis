@@ -22,7 +22,6 @@ from typing import Iterable
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE_DIR = ROOT / ".claude" / "skills"
-PLUGIN_SKILLS_DIR = ROOT / "plugins" / "jeac-research-skills" / "skills"
 MANIFEST_NAME = ".jeac-skill-sync.json"
 REQUIRED_SKILLS = frozenset(
     {
@@ -229,7 +228,6 @@ def target_destinations(target: str, destination: Path | None) -> tuple[Path, ..
     defaults = {
         "claude": Path(os.environ.get("JEAC_CLAUDE_SKILLS_DIR", home / ".claude" / "skills")),
         "codex": Path(os.environ.get("JEAC_CODEX_SKILLS_DIR", home / ".agents" / "skills")),
-        "plugin": Path(os.environ.get("JEAC_PLUGIN_SKILLS_DIR", PLUGIN_SKILLS_DIR)),
     }
     if target == "directory":
         if destination is None:
@@ -252,7 +250,7 @@ def _describe_plan(plan: SyncPlan) -> str:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="One-way installer for version-controlled JEAC skills.")
-    parser.add_argument("--target", choices=("claude", "codex", "plugin", "directory", "all"), required=True)
+    parser.add_argument("--target", choices=("claude", "codex", "directory", "all"), required=True)
     parser.add_argument("--destination", type=Path, help="Custom skills directory; required for --target directory.")
     parser.add_argument("--apply", action="store_true", help="Apply the copy. Without this flag the script only prints a plan.")
     parser.add_argument("--check", action="store_true", help="Exit non-zero if a target does not match the canonical source.")
