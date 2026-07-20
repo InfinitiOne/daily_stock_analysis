@@ -2831,7 +2831,7 @@ class StockAnalysisPipeline:
             # instead of inferring a date from a UTC-naive DB timestamp.
             "same_day_reuse": cache_marker(
                 kind=same_day_report_kind(),
-                portfolio_context=self.portfolio_context,
+                portfolio_context=getattr(self, "portfolio_context", None),
             ),
         }
         market_structure_context = enhanced_context.get("market_structure_context")
