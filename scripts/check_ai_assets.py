@@ -27,6 +27,19 @@ REQUIRED_SKILL_FILES = {
     "fix-issue/SKILL.md",
 }
 
+REQUIRED_JEAC_SKILL_FILES = {
+    "jeac-data-quality/SKILL.md",
+    "jeac-news-intel/SKILL.md",
+    "jeac-sepa-swing/SKILL.md",
+    "jeac-portfolio-risk/SKILL.md",
+    "jeac-backtest-validation/SKILL.md",
+}
+
+SKILL_SYNC_SCRIPT = ROOT / "scripts" / "sync_agent_skills.py"
+JEAC_PLUGIN_ROOT = ROOT / "plugins" / "jeac-research-skills"
+JEAC_PLUGIN_MANIFEST = JEAC_PLUGIN_ROOT / ".codex-plugin" / "plugin.json"
+JEAC_MARKETPLACE = ROOT / ".agents" / "plugins" / "marketplace.json"
+
 REQUIRED_GITIGNORE_SNIPPETS = (
     ".claude/*",
     "!.claude/skills/",
@@ -88,6 +101,29 @@ def ensure_skill_files() -> None:
             content = path.read_text(encoding="utf-8")
             if relative_path != "README.md" and "AGENTS.md" not in content:
                 fail(f"{path.relative_to(ROOT)} must reference AGENTS.md as the rule source")
+    for relative_path in REQUIRED_JEAC_SKILL_FILES:
+        path = CLAUDE_SKILLS_DIR / relative_path
+        if not path.exists():
+            fail(f"missing JEAC skill source: {path.relative_to(ROOT)}")
+
+
+def ensure_skill_sync_script() -> None:
+    ensure_file_exists(SKILL_SYNC_SCRIPT, "one-way JEAC skill sync script")
+
+
+def ensure_jeac_plugin_bundle() -> None:
+    ensure_file_exists(JEAC_PLUGIN_MANIFEST, "JEAC plugin manifest")
+    ensure_file_exists(JEAC_MARKETPLACE, "JEAC plugin marketplace")
+    result = subprocess.run(
+        [sys.executable, str(SKILL_SYNC_SCRIPT), "--target", "plugin", "--check"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        fail(f"JEAC plugin bundle is not synchronized with .claude/skills: {detail}")
 
 
 def ensure_gitignore_rules() -> None:
@@ -118,6 +154,8 @@ def main() -> None:
     ensure_copilot_entry()
     ensure_instruction_files()
     ensure_skill_files()
+    ensure_skill_sync_script()
+    ensure_jeac_plugin_bundle()
     ensure_gitignore_rules()
     ensure_no_tracked_claude_artifacts()
     print("[ai-assets] OK")
