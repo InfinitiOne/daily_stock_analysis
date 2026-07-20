@@ -26,6 +26,7 @@ from typing import List, Dict, Any, Optional, Tuple, Callable
 import pandas as pd
 
 from src.config import FUNDAMENTAL_STAGE_TIMEOUT_SECONDS_DEFAULT, get_config, Config
+from src.data.stock_mapping import is_meaningful_stock_name
 from src.storage import get_db
 from data_provider import DataFetcherManager
 from data_provider.base import is_bse_code, normalize_stock_code
