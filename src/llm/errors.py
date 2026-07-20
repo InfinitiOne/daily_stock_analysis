@@ -23,6 +23,16 @@ _UNSUPPORTED_PARAM_MARKERS = (
     "does not support",
 )
 
+# A LiteLLM router can report a normal 429 while every configured deployment
+# is already in cooldown.  Retrying the same call cannot recover capacity and
+# turns a single unavailable provider into minutes of serial waiting.
+_GLOBAL_DEPLOYMENT_UNAVAILABLE_MARKERS = (
+    "no deployments available",
+    "no deployment available",
+    "all deployments are unavailable",
+    "all deployment unavailable",
+)
+
 _TEMPERATURE_VALUE_PATTERN = r"-?\d+(?:\.\d+)?"
 _ALLOWED_TEMPERATURE_PATTERNS = (
     re.compile(
@@ -62,6 +72,12 @@ def _collect_error_text(value: Any, seen: Optional[set] = None) -> List[str]:
 
 def _normalized_error_text(error: BaseException) -> str:
     return " ".join(chunk for chunk in _collect_error_text(error) if chunk).lower()
+
+
+def is_litellm_global_capacity_error(error: BaseException) -> bool:
+    """Return True when a router has no deployment that can serve this call."""
+    text = _normalized_error_text(error)
+    return any(marker in text for marker in _GLOBAL_DEPLOYMENT_UNAVAILABLE_MARKERS)
 
 
 def _parse_allowed_temperature(text: str) -> Optional[float]:
@@ -223,7 +239,11 @@ def call_litellm_with_rate_limit_recovery(
                 logger=logger,
             )
         except Exception as exc:
-            if not is_litellm_rate_limit_error(exc) or attempts >= max_rate_limit_retries:
+            if (
+                not is_litellm_rate_limit_error(exc)
+                or is_litellm_global_capacity_error(exc)
+                or attempts >= max_rate_limit_retries
+            ):
                 raise
             wait_seconds = get_litellm_retry_after_seconds(
                 exc,
