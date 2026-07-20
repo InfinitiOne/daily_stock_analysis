@@ -4,7 +4,7 @@ Alpha Vantage 免費方案目前限制每日 25 次請求。JEAC 將它視為美
 
 ## 預設行為
 
-- `ALPHAVANTAGE_MAX_REQUESTS_PER_DAY=25`
+- `ALPHAVANTAGE_MAX_REQUESTS_PER_DAY=25`（Variable 只能調低，程式硬上限仍為 25）
 - `ALPHAVANTAGE_BUDGET_TIMEZONE=UTC`
 - `ALPHAVANTAGE_BUDGET_FILE=data/provider_budget/alphavantage.json`
 - `ALPHAVANTAGE_NAME_LOOKUP_ENABLED=false`
@@ -17,7 +17,7 @@ GitHub Actions 的三個 JEAC 報告 workflow 會以台北日期快取 `provider
 
 一般不需要新增 Variable，預設值已經符合免費方案。若要調整，可設定：
 
-- `ALPHAVANTAGE_MAX_REQUESTS_PER_DAY`：不要高於供應商帳戶實際配額。
+- `ALPHAVANTAGE_MAX_REQUESTS_PER_DAY`：可調低；目前免費方案的程式硬上限為 25。
 - `ALPHAVANTAGE_BUDGET_TIMEZONE`：通常維持 `UTC`；只有確認供應商日切換時區後才修改。
 - `ALPHAVANTAGE_NAME_LOOKUP_ENABLED`：只有在需要且願意消耗額外請求時才設為 `true`。
 
