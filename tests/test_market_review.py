@@ -318,7 +318,7 @@ class MarketReviewLocalizationTestCase(unittest.TestCase):
         )
         self.assertEqual(
             set(persist_history.call_args.kwargs["market_light_snapshots"]),
-            {"cn", "hk", "us"},
+            {"tw", "cn", "hk", "us"},
         )
         sent_content = notifier.send.call_args.args[0]
         self.assertTrue(sent_content.startswith("🎯 Market Review\n\n"))
