@@ -374,7 +374,7 @@ class StockAnalysisPipeline:
         trend_result: TrendAnalysisResult,
         report_language: str,
     ) -> AnalysisResult:
-        """Keep valid core data when an LLM response fails JSON validation."""
+        """Keep valid core data when optional LLM output is unavailable."""
         if not result or result.success:
             return result
         error_text = str(getattr(result, "error_message", "") or "")
@@ -384,16 +384,35 @@ class StockAnalysisPipeline:
             "JSON 格式驗證失敗",
             "invalid_json",
         )
-        if not any(marker.lower() in error_text.lower() for marker in schema_failure_markers):
+        provider_unavailable_markers = (
+            "no deployments available",
+            "all llm models failed",
+            "routerratelimiterror",
+            "llm provider temporarily unavailable",
+        )
+        is_schema_failure = any(
+            marker.lower() in error_text.lower() for marker in schema_failure_markers
+        )
+        is_provider_unavailable = any(
+            marker.lower() in error_text.lower()
+            for marker in provider_unavailable_markers
+        )
+        if not (is_schema_failure or is_provider_unavailable):
             return result
 
         language = normalize_report_language(report_language)
         evidence = dict(getattr(trend_result, "technical_evidence", {}) or {})
-        evidence["llm_status"] = "schema_validation_failed"
+        evidence["llm_status"] = (
+            "schema_validation_failed" if is_schema_failure else "provider_unavailable"
+        )
         # The provider error remains diagnostic-only.  A user-facing report
         # must contain the verified deterministic analysis, not repeat an
         # implementation failure in every risk/confidence/data-limit block.
-        evidence["llm_reason"] = "structured_response_rejected"
+        evidence["llm_reason"] = (
+            "structured_response_rejected"
+            if is_schema_failure
+            else "provider_capacity_unavailable"
+        )
         score = getattr(trend_result, "signal_score", None)
         trend_value = getattr(getattr(trend_result, "trend_status", None), "value", "未取得／暫停判定")
         current_price = getattr(trend_result, "current_price", None)
@@ -526,7 +545,11 @@ class StockAnalysisPipeline:
         result.data_missing_reasons = list(getattr(result, "data_missing_reasons", []) or [])
         result.success = True
         result.error_message = None
-        logger.warning("[%s] LLM JSON 驗證失敗；以規則化技術結果繼續週報完整性檢查", result.code)
+        logger.warning(
+            "[%s] LLM %s；以規則化技術結果繼續報告完整性檢查",
+            result.code,
+            "JSON 驗證失敗" if is_schema_failure else "服務暫時不可用",
+        )
         return result
 
     def _emit_progress(self, progress: int, message: str) -> None:
