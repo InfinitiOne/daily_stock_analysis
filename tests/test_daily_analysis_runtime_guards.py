@@ -22,7 +22,10 @@ def test_llm_request_timeout_is_bounded(monkeypatch) -> None:
 
 def test_daily_workflow_has_queue_and_provider_time_guards() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    assert "cancel-in-progress: true" in workflow
+    # Report jobs share the Alpha Vantage counter, so they must queue instead
+    # of cancelling the active run and losing its persisted budget state.
+    assert "group: jeac-provider-budget" in workflow
+    assert "cancel-in-progress: false" in workflow
     assert "timeout-minutes: 25" in workflow
     for key in (
         "LLM_REQUEST_TIMEOUT_SECONDS",
