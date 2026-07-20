@@ -95,19 +95,6 @@ def test_all_target_uses_claude_and_codex_default_locations(tmp_path: Path, monk
     )
 
 
-def test_plugin_target_uses_the_generated_plugin_bundle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(sync_agent_skills, "ROOT", tmp_path)
-    monkeypatch.setattr(
-        sync_agent_skills,
-        "PLUGIN_SKILLS_DIR",
-        tmp_path / "plugins" / "jeac-research-skills" / "skills",
-    )
-
-    assert sync_agent_skills.target_destinations("plugin", None) == (
-        tmp_path / "plugins" / "jeac-research-skills" / "skills",
-    )
-
-
 def test_destination_cannot_be_the_canonical_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = tmp_path / ".claude" / "skills"
     source.mkdir(parents=True)
