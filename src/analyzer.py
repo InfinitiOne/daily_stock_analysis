@@ -4870,14 +4870,19 @@ SEPA 證據：{trend.get("technical_evidence", {})}
                 reason="minimal_contract_failed",
                 message="analysis JSON does not contain any minimal parser field",
             )
-        if "sentiment_score" in data:
+        # A score can be intentionally null when the model leaves scoring to
+        # the deterministic JEAC rules.  Treat it as an absent optional field,
+        # not invalid JSON; the parser below supplies a neutral interim score
+        # and the pipeline subsequently applies rule-based calibration.
+        raw_sentiment_score = data.get("sentiment_score")
+        if raw_sentiment_score is not None:
             try:
-                int(data.get("sentiment_score", 50))
+                int(raw_sentiment_score)
             except (TypeError, ValueError) as exc:
                 raise self._generation_validation_error(
                     GenerationErrorCode.SCHEMA_VALIDATION_FAILED,
                     reason="parser_contract_failed",
-                    message="sentiment_score must be integer-compatible",
+                    message="sentiment_score must be integer-compatible or null",
                 ) from exc
 
     def _generation_validation_error(
@@ -4959,7 +4964,11 @@ SEPA 證據：{trend.get("technical_evidence", {})}
                 code=code,
                 name=name,
                 # 核心指标
-                sentiment_score=int(data.get('sentiment_score', 50)),
+                sentiment_score=(
+                    int(data.get('sentiment_score'))
+                    if data.get('sentiment_score') is not None
+                    else 50
+                ),
                 trend_prediction=data.get('trend_prediction', localize_trend_prediction('震荡', report_language)),
                 operation_advice=data.get('operation_advice', localize_operation_advice('持有', report_language)),
                 decision_type=decision_type,
