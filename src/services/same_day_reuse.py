@@ -139,9 +139,10 @@ def analysis_payload_is_complete(payload: Any, snapshot: Any) -> bool:
         return False
     if payload.get("data_missing_reasons"):
         return False
-    # News retrieval is optional only when the service explicitly completed
-    # with zero results.  A missing count means the fetch was skipped/failed.
-    if "news_result_count" not in snapshot and not meaningful_text(snapshot.get("news_content")):
+    # News retrieval is reusable only when the search call explicitly
+    # completed.  A zero-result search may be valid, but a missing/failed
+    # completion marker must be retried rather than mistaken for empty data.
+    if snapshot.get("news_search_completed") is not True:
         return False
     return True
 
