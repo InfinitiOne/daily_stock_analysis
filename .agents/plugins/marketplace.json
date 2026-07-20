@@ -1,16 +1,14 @@
 {
-  "name": "personal",
+  "name": "jeac-research",
   "interface": {
-    "displayName": "Personal"
+    "displayName": "JEAC Research"
   },
   "plugins": [
     {
       "name": "jeac-research-skills",
       "source": {
-        "source": "git-subdir",
-        "url": "https://github.com/InfinitiOne/daily_stock_analysis.git",
-        "path": "./plugins/jeac-research-skills",
-        "ref": "main"
+        "source": "local",
+        "path": "./plugins/jeac-research-skills"
       },
       "policy": {
         "installation": "AVAILABLE",
