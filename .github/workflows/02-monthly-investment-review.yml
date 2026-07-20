@@ -14,7 +14,9 @@ on:
         type: boolean
 
 concurrency:
-  group: jeac-monthly-analysis
+  # Share a lock with daily/weekly jobs while the Alpha Vantage budget is
+  # restored and saved.
+  group: jeac-provider-budget
   cancel-in-progress: false
 
 jobs:
@@ -27,9 +29,26 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+      - name: Resolve Taipei report date
+        id: report-date
+        run: echo "value=$(TZ=Asia/Taipei date +%F)" >> "$GITHUB_OUTPUT"
+      - name: Restore same-day analysis state
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: jeac-same-day-monthly-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
+          restore-keys: |
+            jeac-same-day-monthly-${{ steps.report-date.outputs.value }}-
+      - name: Restore Alpha Vantage daily budget
+        uses: actions/cache/restore@v4
+        with:
+          path: provider_budget
+          key: jeac-provider-budget-alphavantage-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
+          restore-keys: |
+            jeac-provider-budget-alphavantage-${{ steps.report-date.outputs.value }}-
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Load protected current portfolio master
+      - name: Build runner-only portfolio master from Secret
         env:
           JEAC_CURRENT_PORTFOLIO_MARKDOWN: ${{ secrets.JEAC_CURRENT_PORTFOLIO_MARKDOWN }}
         run: |
@@ -48,6 +67,8 @@ jobs:
           JEAC_MONTHLY_HISTORY_DAYS: "420"
           JEAC_REQUIRE_MARKET_CORE_DATA: "true"
           JEAC_REPORT_KIND: monthly
+          JEAC_SAME_DAY_REUSE_ENABLED: ${{ vars.JEAC_SAME_DAY_REUSE_ENABLED || 'true' }}
+          JEAC_SAME_DAY_REUSE_DATE: ${{ steps.report-date.outputs.value }}
           REPORT_TYPE: full
           REPORT_LANGUAGE: "zh-TW"
           MARKET_REVIEW_ENABLED: ${{ vars.MARKET_REVIEW_ENABLED || 'true' }}
@@ -59,18 +80,30 @@ jobs:
           LITELLM_CONFIG: ${{ vars.LITELLM_CONFIG || secrets.LITELLM_CONFIG }}
           LITELLM_CONFIG_YAML: ${{ vars.LITELLM_CONFIG_YAML || secrets.LITELLM_CONFIG_YAML }}
           LITELLM_MODEL: ${{ vars.LITELLM_MODEL || secrets.LITELLM_MODEL }}
-          LLM_CHANNELS: ${{ vars.LLM_CHANNELS || 'groq' }}
+          LITELLM_FALLBACK_MODELS: ${{ vars.JEAC_LITELLM_FALLBACK_MODELS || vars.LITELLM_FALLBACK_MODELS || 'openai/qwen/qwen3-32b' }}
+          LLM_CHANNELS: ${{ vars.JEAC_LLM_CHANNELS || vars.LLM_CHANNELS || 'groq,openrouter' }}
           LLM_GROQ_PROTOCOL: ${{ vars.LLM_GROQ_PROTOCOL || 'openai' }}
           LLM_GROQ_BASE_URL: ${{ vars.LLM_GROQ_BASE_URL || 'https://api.groq.com/openai/v1' }}
           LLM_GROQ_API_KEYS: ${{ secrets.LLM_GROQ_API_KEYS }}
           LLM_GROQ_MODELS: ${{ vars.LLM_GROQ_MODELS || 'llama-3.3-70b-versatile' }}
           LLM_GROQ_ENABLED: ${{ vars.LLM_GROQ_ENABLED || 'true' }}
+          LLM_OPENROUTER_PROTOCOL: ${{ vars.LLM_OPENROUTER_PROTOCOL || 'openai' }}
+          LLM_OPENROUTER_BASE_URL: ${{ vars.LLM_OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1' }}
+          LLM_OPENROUTER_API_KEYS: ${{ secrets.LLM_OPENROUTER_API_KEYS }}
+          LLM_OPENROUTER_MODELS: ${{ vars.JEAC_OPENROUTER_MODELS || vars.LLM_OPENROUTER_MODELS || 'qwen/qwen3-32b' }}
+          LLM_OPENROUTER_ENABLED: ${{ vars.LLM_OPENROUTER_ENABLED || 'true' }}
+          LLM_OPENROUTER_MAX_REQUESTS_PER_KEY: ${{ vars.LLM_OPENROUTER_MAX_REQUESTS_PER_KEY || '50' }}
+          LLM_OPENROUTER_MAX_REQUESTS_PER_RUN: ${{ vars.MONTHLY_OPENROUTER_MAX_REQUESTS_PER_RUN || '12' }}
           ANALYSIS_PROMPT_PROFILE: ${{ vars.ANALYSIS_PROMPT_PROFILE || 'compact' }}
           ANALYSIS_MAX_OUTPUT_TOKENS: ${{ vars.ANALYSIS_MAX_OUTPUT_TOKENS || '2400' }}
           FUGLE_API_KEY: ${{ secrets.FUGLE_API_KEY }}
           FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
+          ALPHAVANTAGE_MAX_REQUESTS_PER_DAY: ${{ vars.ALPHAVANTAGE_MAX_REQUESTS_PER_DAY || '25' }}
+          ALPHAVANTAGE_BUDGET_FILE: provider_budget/alphavantage.json
+          ALPHAVANTAGE_BUDGET_TIMEZONE: ${{ vars.ALPHAVANTAGE_BUDGET_TIMEZONE || 'UTC' }}
+          ALPHAVANTAGE_NAME_LOOKUP_ENABLED: ${{ vars.ALPHAVANTAGE_NAME_LOOKUP_ENABLED || 'false' }}
           BOCHA_API_KEYS: ${{ secrets.BOCHA_API_KEYS }}
           TAVILY_API_KEYS: ${{ secrets.TAVILY_API_KEYS }}
           SERPAPI_API_KEYS: ${{ secrets.SERPAPI_API_KEYS }}
@@ -106,6 +139,18 @@ jobs:
           NOTIFICATION_REPORT_CHANNELS: ${{ vars.NOTIFICATION_REPORT_CHANNELS || secrets.NOTIFICATION_REPORT_CHANNELS }}
           NOTIFICATION_TIMEZONE: "Asia/Taipei"
         run: python main.py --force-run
+      - name: Save same-day analysis state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: jeac-same-day-monthly-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
+      - name: Save Alpha Vantage daily budget
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: provider_budget
+          key: jeac-provider-budget-alphavantage-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
       - name: Upload limited diagnostics
         if: always()
         uses: actions/upload-artifact@v6
@@ -116,3 +161,4 @@ jobs:
           path: logs/
           retention-days: 14
           if-no-files-found: warn
+

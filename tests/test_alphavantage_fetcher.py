@@ -151,6 +151,14 @@ class TestAlphaVantageFetcherStockName(unittest.TestCase):
     """Test get_stock_name with mocked HTTP."""
 
     def setUp(self):
+        # Name lookup is an opt-in Alpha Vantage request so production runs
+        # preserve the daily free-tier budget. Enable it explicitly here to
+        # exercise the endpoint contract without changing the runtime default.
+        self._name_lookup_env = patch.dict(
+            os.environ, {"ALPHAVANTAGE_NAME_LOOKUP_ENABLED": "true"}
+        )
+        self._name_lookup_env.start()
+        self.addCleanup(self._name_lookup_env.stop)
         from data_provider.alphavantage_fetcher import AlphaVantageFetcher
         self.fetcher = AlphaVantageFetcher()
         self.fetcher._api_key = "test_key"

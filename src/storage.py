@@ -2542,6 +2542,52 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
                 .limit(1)
             ).scalars().first()
             return result
+
+    def get_latest_same_day_analysis_history(
+        self,
+        *,
+        code: str,
+        report_type: str,
+        report_kind: str,
+        run_date: str,
+    ) -> Optional[AnalysisHistory]:
+        """Return the newest cache-marked analysis for one workflow/date.
+
+        The marker is deliberately stored in ``context_snapshot`` instead of
+        being inferred from ``created_at``.  GitHub runners use UTC while the
+        report contract uses Asia/Taipei; an explicit marker prevents a
+        midnight boundary from reusing the wrong report.
+        """
+        if not code or not report_type or not report_kind or not run_date:
+            return None
+
+        with self.get_session() as session:
+            rows = session.execute(
+                select(AnalysisHistory)
+                .where(
+                    AnalysisHistory.code == code,
+                    AnalysisHistory.report_type == report_type,
+                    AnalysisHistory.context_snapshot.is_not(None),
+                )
+                .order_by(desc(AnalysisHistory.created_at), desc(AnalysisHistory.id))
+                .limit(50)
+            ).scalars().all()
+
+            for row in rows:
+                try:
+                    snapshot = json.loads(row.context_snapshot or "{}")
+                except Exception:
+                    continue
+                marker = snapshot.get("same_day_reuse") if isinstance(snapshot, dict) else None
+                if not isinstance(marker, dict):
+                    continue
+                if (
+                    marker.get("schema_version") == 1
+                    and str(marker.get("report_kind") or "").strip().lower() == str(report_kind).strip().lower()
+                    and str(marker.get("run_date") or "").strip() == str(run_date).strip()
+                ):
+                    return row
+        return None
     
     def get_data_range(
         self, 

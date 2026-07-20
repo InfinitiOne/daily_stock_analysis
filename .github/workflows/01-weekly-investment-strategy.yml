@@ -13,7 +13,9 @@ on:
         type: boolean
 
 concurrency:
-  group: jeac-weekly-analysis
+  # Share a lock with daily/monthly jobs while the Alpha Vantage budget is
+  # restored and saved.
+  group: jeac-provider-budget
   cancel-in-progress: false
 
 jobs:
@@ -26,9 +28,26 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+      - name: Resolve Taipei report date
+        id: report-date
+        run: echo "value=$(TZ=Asia/Taipei date +%F)" >> "$GITHUB_OUTPUT"
+      - name: Restore same-day analysis state
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: jeac-same-day-weekly-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
+          restore-keys: |
+            jeac-same-day-weekly-${{ steps.report-date.outputs.value }}-
+      - name: Restore Alpha Vantage daily budget
+        uses: actions/cache/restore@v4
+        with:
+          path: provider_budget
+          key: jeac-provider-budget-alphavantage-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
+          restore-keys: |
+            jeac-provider-budget-alphavantage-${{ steps.report-date.outputs.value }}-
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Load protected current portfolio master
+      - name: Build runner-only portfolio master from Secret
         env:
           JEAC_CURRENT_PORTFOLIO_MARKDOWN: ${{ secrets.JEAC_CURRENT_PORTFOLIO_MARKDOWN }}
         run: |
@@ -47,12 +66,20 @@ jobs:
           LITELLM_CONFIG: ${{ vars.LITELLM_CONFIG || secrets.LITELLM_CONFIG }}
           LITELLM_CONFIG_YAML: ${{ vars.LITELLM_CONFIG_YAML || secrets.LITELLM_CONFIG_YAML }}
           LITELLM_MODEL: ${{ vars.LITELLM_MODEL || secrets.LITELLM_MODEL }}
-          LLM_CHANNELS: ${{ vars.LLM_CHANNELS || 'groq' }}
+          LITELLM_FALLBACK_MODELS: ${{ vars.JEAC_LITELLM_FALLBACK_MODELS || vars.LITELLM_FALLBACK_MODELS || 'openai/qwen/qwen3-32b' }}
+          LLM_CHANNELS: ${{ vars.JEAC_LLM_CHANNELS || vars.LLM_CHANNELS || 'groq,openrouter' }}
           LLM_GROQ_PROTOCOL: ${{ vars.LLM_GROQ_PROTOCOL || 'openai' }}
           LLM_GROQ_BASE_URL: ${{ vars.LLM_GROQ_BASE_URL || 'https://api.groq.com/openai/v1' }}
           LLM_GROQ_API_KEYS: ${{ secrets.LLM_GROQ_API_KEYS }}
           LLM_GROQ_MODELS: ${{ vars.LLM_GROQ_MODELS || 'llama-3.3-70b-versatile' }}
           LLM_GROQ_ENABLED: ${{ vars.LLM_GROQ_ENABLED || 'true' }}
+          LLM_OPENROUTER_PROTOCOL: ${{ vars.LLM_OPENROUTER_PROTOCOL || 'openai' }}
+          LLM_OPENROUTER_BASE_URL: ${{ vars.LLM_OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1' }}
+          LLM_OPENROUTER_API_KEYS: ${{ secrets.LLM_OPENROUTER_API_KEYS }}
+          LLM_OPENROUTER_MODELS: ${{ vars.JEAC_OPENROUTER_MODELS || vars.LLM_OPENROUTER_MODELS || 'qwen/qwen3-32b' }}
+          LLM_OPENROUTER_ENABLED: ${{ vars.LLM_OPENROUTER_ENABLED || 'true' }}
+          LLM_OPENROUTER_MAX_REQUESTS_PER_KEY: ${{ vars.LLM_OPENROUTER_MAX_REQUESTS_PER_KEY || '50' }}
+          LLM_OPENROUTER_MAX_REQUESTS_PER_RUN: ${{ vars.WEEKLY_OPENROUTER_MAX_REQUESTS_PER_RUN || '12' }}
           ANALYSIS_PROMPT_PROFILE: ${{ vars.ANALYSIS_PROMPT_PROFILE || 'compact' }}
           ANALYSIS_MAX_OUTPUT_TOKENS: ${{ vars.ANALYSIS_MAX_OUTPUT_TOKENS || '2400' }}
           FUGLE_API_KEY: ${{ secrets.FUGLE_API_KEY }}
@@ -62,6 +89,10 @@ jobs:
           # with Stooq retained as a final best-effort fallback.
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
+          ALPHAVANTAGE_MAX_REQUESTS_PER_DAY: ${{ vars.ALPHAVANTAGE_MAX_REQUESTS_PER_DAY || '25' }}
+          ALPHAVANTAGE_BUDGET_FILE: provider_budget/alphavantage.json
+          ALPHAVANTAGE_BUDGET_TIMEZONE: ${{ vars.ALPHAVANTAGE_BUDGET_TIMEZONE || 'UTC' }}
+          ALPHAVANTAGE_NAME_LOOKUP_ENABLED: ${{ vars.ALPHAVANTAGE_NAME_LOOKUP_ENABLED || 'false' }}
           # News and sentiment evidence.  These must be explicitly mapped:
           # GitHub Actions does not expose arbitrary repository secrets to a run.
           BOCHA_API_KEYS: ${{ secrets.BOCHA_API_KEYS }}
@@ -97,7 +128,21 @@ jobs:
           GOOGLE_DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.GOOGLE_DRIVE_OAUTH_TOKEN_JSON }}
           GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON }}
           JEAC_REPORT_KIND: weekly
+          JEAC_SAME_DAY_REUSE_ENABLED: ${{ vars.JEAC_SAME_DAY_REUSE_ENABLED || 'true' }}
+          JEAC_SAME_DAY_REUSE_DATE: ${{ steps.report-date.outputs.value }}
         run: python main.py --force-run
+      - name: Save same-day analysis state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: jeac-same-day-weekly-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
+      - name: Save Alpha Vantage daily budget
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: provider_budget
+          key: jeac-provider-budget-alphavantage-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
       - name: Upload limited diagnostics
         if: always()
         uses: actions/upload-artifact@v6
@@ -108,3 +153,4 @@ jobs:
           path: logs/
           retention-days: 7
           if-no-files-found: warn
+

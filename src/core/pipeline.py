@@ -11,6 +11,7 @@ A股自选股智能分析系统 - 核心分析流水线
 4. 提供股票分析的核心功能
 """
 
+import json
 import logging
 import os
 import threading
@@ -92,6 +93,13 @@ from src.core.trading_calendar import (
 )
 from data_provider.us_index_mapping import is_us_stock_code
 from bot.models import BotMessage
+from src.services.same_day_reuse import (
+    analysis_payload_is_complete,
+    cache_marker,
+    report_kind as same_day_report_kind,
+    same_day_reuse_enabled,
+    taipei_date,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -374,7 +382,7 @@ class StockAnalysisPipeline:
         trend_result: TrendAnalysisResult,
         report_language: str,
     ) -> AnalysisResult:
-        """Keep valid core data when an LLM response fails JSON validation."""
+        """Keep valid core data when optional LLM output is unavailable."""
         if not result or result.success:
             return result
         error_text = str(getattr(result, "error_message", "") or "")
@@ -384,16 +392,35 @@ class StockAnalysisPipeline:
             "JSON 格式驗證失敗",
             "invalid_json",
         )
-        if not any(marker.lower() in error_text.lower() for marker in schema_failure_markers):
+        provider_unavailable_markers = (
+            "no deployments available",
+            "all llm models failed",
+            "routerratelimiterror",
+            "llm provider temporarily unavailable",
+        )
+        is_schema_failure = any(
+            marker.lower() in error_text.lower() for marker in schema_failure_markers
+        )
+        is_provider_unavailable = any(
+            marker.lower() in error_text.lower()
+            for marker in provider_unavailable_markers
+        )
+        if not (is_schema_failure or is_provider_unavailable):
             return result
 
         language = normalize_report_language(report_language)
         evidence = dict(getattr(trend_result, "technical_evidence", {}) or {})
-        evidence["llm_status"] = "schema_validation_failed"
+        evidence["llm_status"] = (
+            "schema_validation_failed" if is_schema_failure else "provider_unavailable"
+        )
         # The provider error remains diagnostic-only.  A user-facing report
         # must contain the verified deterministic analysis, not repeat an
         # implementation failure in every risk/confidence/data-limit block.
-        evidence["llm_reason"] = "structured_response_rejected"
+        evidence["llm_reason"] = (
+            "structured_response_rejected"
+            if is_schema_failure
+            else "provider_capacity_unavailable"
+        )
         score = getattr(trend_result, "signal_score", None)
         trend_value = getattr(getattr(trend_result, "trend_status", None), "value", "未取得／暫停判定")
         current_price = getattr(trend_result, "current_price", None)
@@ -526,7 +553,11 @@ class StockAnalysisPipeline:
         result.data_missing_reasons = list(getattr(result, "data_missing_reasons", []) or [])
         result.success = True
         result.error_message = None
-        logger.warning("[%s] LLM JSON 驗證失敗；以規則化技術結果繼續週報完整性檢查", result.code)
+        logger.warning(
+            "[%s] LLM %s；以規則化技術結果繼續報告完整性檢查",
+            result.code,
+            "JSON 驗證失敗" if is_schema_failure else "服務暫時不可用",
+        )
         return result
 
     def _emit_progress(self, progress: int, message: str) -> None:
@@ -911,6 +942,7 @@ class StockAnalysisPipeline:
                 market=market or "cn",
             )
             news_result_count: Optional[int] = None
+            news_search_completed: Optional[bool] = None
             self._emit_progress(46, f"{stock_name}：正在检索新闻与舆情")
             if self.search_service is not None and self.search_service.is_available:
                 logger.info(f"{stock_name}({code}) 开始多维度情报搜索...")
@@ -920,6 +952,10 @@ class StockAnalysisPipeline:
                     stock_code=code,
                     stock_name=stock_name,
                     max_searches=5
+                )
+                news_search_completed = bool(intel_results) and all(
+                    bool(response and response.success)
+                    for response in intel_results.values()
                 )
 
                 # 格式化情报报告
@@ -1168,6 +1204,7 @@ class StockAnalysisPipeline:
                         enhanced_context=enhanced_context,
                         news_content=news_context,
                         news_result_count=news_result_count,
+                        news_search_completed=news_search_completed,
                         realtime_quote=realtime_quote,
                         chip_data=chip_data,
                         analysis_context_pack_overview=analysis_context_pack_overview,
@@ -2778,6 +2815,7 @@ class StockAnalysisPipeline:
         realtime_quote: Any,
         chip_data: Optional[ChipDistribution],
         news_result_count: Optional[int] = None,
+        news_search_completed: Optional[bool] = None,
         analysis_context_pack_overview: Optional[Dict[str, Any]] = None,
         market_phase_summary: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
@@ -2789,6 +2827,12 @@ class StockAnalysisPipeline:
             "news_content": news_content,
             "realtime_quote_raw": self._safe_to_dict(realtime_quote),
             "chip_distribution_raw": self._safe_to_dict(chip_data),
+            # Scope reusable state explicitly by Taipei date and workflow kind
+            # instead of inferring a date from a UTC-naive DB timestamp.
+            "same_day_reuse": cache_marker(
+                kind=same_day_report_kind(),
+                portfolio_context=getattr(self, "portfolio_context", None),
+            ),
         }
         market_structure_context = enhanced_context.get("market_structure_context")
         if isinstance(market_structure_context, dict):
@@ -2797,6 +2841,8 @@ class StockAnalysisPipeline:
             snapshot["news_retrieval_content"] = news_content
         if news_result_count is not None:
             snapshot["news_result_count"] = news_result_count
+        if news_search_completed is not None:
+            snapshot["news_search_completed"] = bool(news_search_completed)
         if analysis_context_pack_overview is not None:
             snapshot["analysis_context_pack_overview"] = analysis_context_pack_overview
         if market_phase_summary is not None:
@@ -2807,6 +2853,84 @@ class StockAnalysisPipeline:
         if self.analysis_skills is not None:
             snapshot["skills"] = list(self.analysis_skills)
         return snapshot
+
+    def _try_reuse_same_day_analysis(
+        self,
+        *,
+        code: str,
+        report_type: ReportType,
+        query_id: str,
+    ) -> Optional[AnalysisResult]:
+        """Restore a complete same-day result without fetching or calling LLM."""
+        if not same_day_reuse_enabled():
+            return None
+
+        report_type_value = getattr(report_type, "value", str(report_type))
+        try:
+            row = self.db.get_latest_same_day_analysis_history(
+                code=code,
+                report_type=report_type_value,
+                report_kind=same_day_report_kind(),
+                run_date=taipei_date().isoformat(),
+            )
+        except Exception as exc:
+            logger.warning("[%s] 同日分析快取讀取失敗，改走完整流程: %s", code, exc)
+            return None
+
+        if row is None:
+            logger.info("[%s] 同日分析快取未命中，執行資料抓取與分析", code)
+            return None
+
+        try:
+            payload = json.loads(getattr(row, "raw_result", None) or "{}")
+            snapshot = json.loads(getattr(row, "context_snapshot", None) or "{}")
+        except Exception as exc:
+            logger.info("[%s] 同日分析快取格式無效，重新抓取: %s", code, exc)
+            return None
+
+        if not analysis_payload_is_complete(payload, snapshot):
+            logger.info("[%s] 同日分析快取缺欄位或含失敗狀態，重新抓取缺失資料", code)
+            return None
+        marker = snapshot.get("same_day_reuse") if isinstance(snapshot, dict) else None
+        expected_marker = cache_marker(
+            kind=same_day_report_kind(),
+            portfolio_context=getattr(self, "portfolio_context", None),
+        )
+        if not isinstance(marker, dict) or marker.get("portfolio_fingerprint") != expected_marker.get("portfolio_fingerprint"):
+            logger.info("[%s] 同日分析快取的持倉輸入已變更，重新分析", code)
+            return None
+
+        allowed_fields = set(getattr(AnalysisResult, "__dataclass_fields__", {}))
+        values = {
+            field: value
+            for field, value in payload.items()
+            if field in allowed_fields
+        }
+        try:
+            result = AnalysisResult(**values)
+        except Exception as exc:
+            logger.info("[%s] 同日分析快取無法還原，重新分析: %s", code, exc)
+            return None
+
+        result.query_id = query_id
+        result.diagnostic_context_snapshot = snapshot
+        enhanced_context = snapshot.get("enhanced_context") if isinstance(snapshot, dict) else {}
+        if isinstance(enhanced_context, dict):
+            if isinstance(enhanced_context.get("fundamental_context"), dict):
+                result.fundamental_context = enhanced_context["fundamental_context"]
+            if isinstance(enhanced_context.get("market_structure_context"), dict):
+                result.market_structure_context = enhanced_context["market_structure_context"]
+        evidence = dict(getattr(result, "technical_evidence", {}) or {})
+        evidence["same_day_reuse"] = True
+        result.technical_evidence = evidence
+        logger.info(
+            "[%s] 命中同日完整分析快取: history_id=%s report_kind=%s run_date=%s；跳過資料抓取與 LLM",
+            code,
+            getattr(row, "id", "?"),
+            same_day_report_kind(),
+            taipei_date().isoformat(),
+        )
+        return result
 
     def _extract_decision_signal_after_history_save(
         self,
@@ -3249,6 +3373,21 @@ class StockAnalysisPipeline:
         try:
             llm_analysis_started = False
             self._emit_progress(12, f"{code}：正在准备分析任务")
+            if not skip_analysis:
+                cached_result = self._try_reuse_same_day_analysis(
+                    code=code,
+                    report_type=report_type,
+                    query_id=effective_query_id,
+                )
+                if cached_result is not None:
+                    if single_stock_notify:
+                        self._send_single_stock_notification(
+                            cached_result,
+                            report_type=report_type,
+                            fallback_code=code,
+                        )
+                    return self._attach_daily_source_trace(cached_result, code)
+
             # Step 1: 获取并保存数据
             success, error = self.fetch_and_save_stock_data(
                 code, current_time=current_time

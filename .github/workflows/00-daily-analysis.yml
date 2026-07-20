@@ -25,10 +25,10 @@ on:
 
 # 并发控制：同一时间只运行一个分析任务
 concurrency:
-  group: stock-analysis
-  # Keep only the latest requested daily analysis.  A stale queued run is
-  # less useful than a fresh report and previously could wait indefinitely.
-  cancel-in-progress: true
+  # Serialize all JEAC report jobs so the Alpha Vantage daily budget counter
+  # cannot be updated concurrently by daily/weekly/monthly runs.
+  group: jeac-provider-budget
+  cancel-in-progress: false
 
 jobs:
   analyze:
@@ -48,13 +48,33 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
+
+      - name: 解析台北報告日期
+        id: report-date
+        run: echo "value=$(TZ=Asia/Taipei date +%F)" >> "$GITHUB_OUTPUT"
+
+      - name: 還原同日分析狀態
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: jeac-same-day-daily-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
+          restore-keys: |
+            jeac-same-day-daily-${{ steps.report-date.outputs.value }}-
+
+      - name: 還原 Alpha Vantage 每日預算
+        uses: actions/cache/restore@v4
+        with:
+          path: provider_budget
+          key: jeac-provider-budget-alphavantage-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
+          restore-keys: |
+            jeac-provider-budget-alphavantage-${{ steps.report-date.outputs.value }}-
       
       - name: 安装依赖
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 载入受保护持仓主档
+      - name: 由 Secret 建立 runner 暫存持倉主檔（不提交 repository）
         env:
           JEAC_CURRENT_PORTFOLIO_MARKDOWN: ${{ secrets.JEAC_CURRENT_PORTFOLIO_MARKDOWN }}
         run: |
@@ -67,7 +87,7 @@ jobs:
       
       - name: 创建必要目录
         run: |
-          mkdir -p data logs reports
+          mkdir -p data logs reports provider_budget
       
       - name: 执行股票分析
         env:
@@ -86,7 +106,8 @@ jobs:
           LITELLM_CONFIG_YAML: ${{ vars.LITELLM_CONFIG_YAML || secrets.LITELLM_CONFIG_YAML }}
           LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
           LITELLM_MODEL: ${{ vars.LITELLM_MODEL || secrets.LITELLM_MODEL }}
-          LITELLM_FALLBACK_MODELS: ${{ vars.LITELLM_FALLBACK_MODELS || secrets.LITELLM_FALLBACK_MODELS }}
+          # JEAC uses a different provider/model as its first fallback.
+          LITELLM_FALLBACK_MODELS: ${{ vars.JEAC_LITELLM_FALLBACK_MODELS || vars.LITELLM_FALLBACK_MODELS || secrets.LITELLM_FALLBACK_MODELS || 'openai/qwen/qwen3-32b' }}
           AGENT_LITELLM_MODEL: ${{ vars.AGENT_LITELLM_MODEL || secrets.AGENT_LITELLM_MODEL }}
           VISION_MODEL: ${{ vars.VISION_MODEL || secrets.VISION_MODEL }}
           OPENAI_VISION_MODEL: ${{ vars.OPENAI_VISION_MODEL || secrets.OPENAI_VISION_MODEL }}
@@ -94,20 +115,22 @@ jobs:
           LLM_TEMPERATURE: ${{ vars.LLM_TEMPERATURE || secrets.LLM_TEMPERATURE }}
           # 精简 JEAC 例行分析的输入/输出；可将 Variable 改为 standard 恢复完整提示词。
           ANALYSIS_PROMPT_PROFILE: ${{ vars.ANALYSIS_PROMPT_PROFILE || 'compact' }}
-          ANALYSIS_MAX_OUTPUT_TOKENS: ${{ vars.ANALYSIS_MAX_OUTPUT_TOKENS || '2400' }}
+          ANALYSIS_MAX_OUTPUT_TOKENS: ${{ vars.DAILY_ANALYSIS_MAX_OUTPUT_TOKENS || '1600' }}
           # Bound a degraded provider instead of allowing one stock to block
           # the serial daily portfolio run for several minutes.
-          LLM_REQUEST_TIMEOUT_SECONDS: ${{ vars.LLM_REQUEST_TIMEOUT_SECONDS || '45' }}
-          LLM_REQUEST_DELAY_SECONDS: ${{ vars.LLM_REQUEST_DELAY_SECONDS || '2' }}
-          LLM_RATE_LIMIT_MAX_RETRIES: ${{ vars.LLM_RATE_LIMIT_MAX_RETRIES || '1' }}
-          LLM_RATE_LIMIT_MAX_WAIT_SECONDS: ${{ vars.LLM_RATE_LIMIT_MAX_WAIT_SECONDS || '20' }}
+          LLM_REQUEST_TIMEOUT_SECONDS: ${{ vars.DAILY_LLM_REQUEST_TIMEOUT_SECONDS || '30' }}
+          LLM_REQUEST_DELAY_SECONDS: ${{ vars.DAILY_LLM_REQUEST_DELAY_SECONDS || '1' }}
+          # A daily report must not wait repeatedly when all Groq deployments
+          # are cooling down.  Rule-based OHLCV analysis remains available.
+          LLM_RATE_LIMIT_MAX_RETRIES: ${{ vars.DAILY_LLM_RATE_LIMIT_MAX_RETRIES || '0' }}
+          LLM_RATE_LIMIT_MAX_WAIT_SECONDS: ${{ vars.DAILY_LLM_RATE_LIMIT_MAX_WAIT_SECONDS || '5' }}
           REPORT_INTEGRITY_RETRY: ${{ vars.REPORT_INTEGRITY_RETRY || '0' }}
           LLM_USAGE_HMAC_SECRET: ${{ secrets.LLM_USAGE_HMAC_SECRET }}
           LLM_USAGE_HMAC_KEY_VERSION: ${{ vars.LLM_USAGE_HMAC_KEY_VERSION || secrets.LLM_USAGE_HMAC_KEY_VERSION }}
           LLM_PROMPT_CACHE_TELEMETRY_ENABLED: ${{ vars.LLM_PROMPT_CACHE_TELEMETRY_ENABLED || secrets.LLM_PROMPT_CACHE_TELEMETRY_ENABLED }}
           LLM_PROMPT_CACHE_HINTS_ENABLED: ${{ vars.LLM_PROMPT_CACHE_HINTS_ENABLED || secrets.LLM_PROMPT_CACHE_HINTS_ENABLED }}
           LLM_PROMPT_CACHE_DIAGNOSTICS_LEVEL: ${{ vars.LLM_PROMPT_CACHE_DIAGNOSTICS_LEVEL || secrets.LLM_PROMPT_CACHE_DIAGNOSTICS_LEVEL }}
-          LLM_CHANNELS: ${{ vars.LLM_CHANNELS || secrets.LLM_CHANNELS }}
+          LLM_CHANNELS: ${{ vars.JEAC_LLM_CHANNELS || vars.LLM_CHANNELS || secrets.LLM_CHANNELS || 'groq,openrouter' }}
           # Hermes 是本地 loopback generation preset；API Key 只从 Secrets 注入。
           # GitHub-hosted runner 的 127.0.0.1 不是用户电脑，本配置通常只适合 self-hosted runner。
           LLM_HERMES_PROTOCOL: ${{ vars.LLM_HERMES_PROTOCOL || secrets.LLM_HERMES_PROTOCOL }}
@@ -263,13 +286,19 @@ jobs:
           LLM_SILICONFLOW_ENABLED: ${{ vars.LLM_SILICONFLOW_ENABLED || secrets.LLM_SILICONFLOW_ENABLED }}
           LLM_SILICONFLOW_EXTRA_HEADERS: ${{ vars.LLM_SILICONFLOW_EXTRA_HEADERS || secrets.LLM_SILICONFLOW_EXTRA_HEADERS }}
 
-          LLM_OPENROUTER_PROTOCOL: ${{ vars.LLM_OPENROUTER_PROTOCOL || secrets.LLM_OPENROUTER_PROTOCOL }}
-          LLM_OPENROUTER_BASE_URL: ${{ vars.LLM_OPENROUTER_BASE_URL || secrets.LLM_OPENROUTER_BASE_URL }}
+          # OpenRouter is only tried after Groq's primary route fails.
+          # Qwen3-32B is a non-Groq multilingual structured-output fallback.
+          LLM_OPENROUTER_PROTOCOL: ${{ vars.LLM_OPENROUTER_PROTOCOL || secrets.LLM_OPENROUTER_PROTOCOL || 'openai' }}
+          LLM_OPENROUTER_BASE_URL: ${{ vars.LLM_OPENROUTER_BASE_URL || secrets.LLM_OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1' }}
           LLM_OPENROUTER_API_KEY: ${{ secrets.LLM_OPENROUTER_API_KEY }}
           LLM_OPENROUTER_API_KEYS: ${{ secrets.LLM_OPENROUTER_API_KEYS }}
-          LLM_OPENROUTER_MODELS: ${{ vars.LLM_OPENROUTER_MODELS || secrets.LLM_OPENROUTER_MODELS }}
-          LLM_OPENROUTER_ENABLED: ${{ vars.LLM_OPENROUTER_ENABLED || secrets.LLM_OPENROUTER_ENABLED }}
+          LLM_OPENROUTER_MODELS: ${{ vars.JEAC_OPENROUTER_MODELS || vars.LLM_OPENROUTER_MODELS || secrets.LLM_OPENROUTER_MODELS || 'qwen/qwen3-32b' }}
+          LLM_OPENROUTER_ENABLED: ${{ vars.LLM_OPENROUTER_ENABLED || secrets.LLM_OPENROUTER_ENABLED || 'true' }}
           LLM_OPENROUTER_EXTRA_HEADERS: ${{ vars.LLM_OPENROUTER_EXTRA_HEADERS || secrets.LLM_OPENROUTER_EXTRA_HEADERS }}
+          # OpenRouter is a fallback only. Keep the total attempts per run
+          # below one key's 50/day limit even if Router reuses one key.
+          LLM_OPENROUTER_MAX_REQUESTS_PER_KEY: ${{ vars.LLM_OPENROUTER_MAX_REQUESTS_PER_KEY || '50' }}
+          LLM_OPENROUTER_MAX_REQUESTS_PER_RUN: ${{ vars.DAILY_OPENROUTER_MAX_REQUESTS_PER_RUN || '12' }}
 
           LLM_OLLAMA_PROTOCOL: ${{ vars.LLM_OLLAMA_PROTOCOL || secrets.LLM_OLLAMA_PROTOCOL }}
           LLM_OLLAMA_BASE_URL: ${{ vars.LLM_OLLAMA_BASE_URL || secrets.LLM_OLLAMA_BASE_URL }}
@@ -304,6 +333,10 @@ jobs:
           # no-key Nasdaq/FRED public-web route is still attempted.
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
+          ALPHAVANTAGE_MAX_REQUESTS_PER_DAY: ${{ vars.ALPHAVANTAGE_MAX_REQUESTS_PER_DAY || '25' }}
+          ALPHAVANTAGE_BUDGET_FILE: provider_budget/alphavantage.json
+          ALPHAVANTAGE_BUDGET_TIMEZONE: ${{ vars.ALPHAVANTAGE_BUDGET_TIMEZONE || 'UTC' }}
+          ALPHAVANTAGE_NAME_LOOKUP_ENABLED: ${{ vars.ALPHAVANTAGE_NAME_LOOKUP_ENABLED || 'false' }}
           # Longbridge OpenAPI（美股/港股实时行情字段补充；不设则仅 YFinance/AkShare，无 [Longbridge] 调用）
           LONGBRIDGE_OAUTH_CLIENT_ID: ${{ vars.LONGBRIDGE_OAUTH_CLIENT_ID || secrets.LONGBRIDGE_OAUTH_CLIENT_ID }}
           LONGBRIDGE_OAUTH_TOKEN_CACHE_B64: ${{ secrets.LONGBRIDGE_OAUTH_TOKEN_CACHE_B64 }}
@@ -444,6 +477,8 @@ jobs:
           GOOGLE_DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.GOOGLE_DRIVE_OAUTH_TOKEN_JSON }}
           GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON }}
           JEAC_REPORT_KIND: daily
+          JEAC_SAME_DAY_REUSE_ENABLED: ${{ vars.JEAC_SAME_DAY_REUSE_ENABLED || 'true' }}
+          JEAC_SAME_DAY_REUSE_DATE: ${{ steps.report-date.outputs.value }}
           # 所有對使用者的日報、DOCX 與 PPTX 均輸出臺灣繁體中文。
           REPORT_LANGUAGE: "zh-TW"
           REPORT_SHOW_LLM_MODEL: ${{ vars.REPORT_SHOW_LLM_MODEL || secrets.REPORT_SHOW_LLM_MODEL || 'true' }}
@@ -456,7 +491,7 @@ jobs:
           # 系统配置
           # ==========================================
           LOG_LEVEL: INFO
-          MAX_WORKERS: ${{ vars.MAX_WORKERS || secrets.MAX_WORKERS || '1' }}
+          MAX_WORKERS: ${{ vars.DAILY_MAX_WORKERS || '2' }}
           # 筹码分布：默认 false（云端接口不稳定）；需启用时在 Settings → Variables 添加 ENABLE_CHIP_DISTRIBUTION=true
           ENABLE_CHIP_DISTRIBUTION: ${{ vars.ENABLE_CHIP_DISTRIBUTION || secrets.ENABLE_CHIP_DISTRIBUTION || 'false' }}
           # 实时行情数据源优先级（腾讯有量比且稳定，推荐首选）
@@ -573,6 +608,20 @@ jobs:
           else
             python main.py $FORCE_RUN_ARG
           fi
+
+      - name: 保存同日分析狀態
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: jeac-same-day-daily-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
+
+      - name: 保存 Alpha Vantage 每日預算
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: provider_budget
+          key: jeac-provider-budget-alphavantage-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
       
       - name: 上传受限诊断信息
         uses: actions/upload-artifact@v6
@@ -591,3 +640,4 @@ jobs:
           echo "分析作业已结束。"
           echo "正式报告仅会上传至配置的私人 Google Drive；GitHub 不显示或列出报告文件。"
           echo "如需排错，请由具权限的维护者查看受限诊断 artifact。"
+
