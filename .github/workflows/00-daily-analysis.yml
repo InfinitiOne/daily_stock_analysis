@@ -74,7 +74,7 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 载入受保护持仓主档
+      - name: 由 Secret 建立 runner 暫存持倉主檔（不提交 repository）
         env:
           JEAC_CURRENT_PORTFOLIO_MARKDOWN: ${{ secrets.JEAC_CURRENT_PORTFOLIO_MARKDOWN }}
         run: |
