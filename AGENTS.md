@@ -48,7 +48,7 @@
 - `.github/copilot-instructions.md` 与 `.github/instructions/*.instructions.md` 是 GitHub Copilot / Coding Agent 的镜像或分层补充；若与本文件冲突，以 `AGENTS.md` 为准。
 - 仓库协作 skill 存放在 `.claude/skills/`，分析产物存放在 `.claude/reviews/`；前者可以入库，后者默认视为本地产物。
 - 根目录 `SKILL.md` 与 `docs/openclaw-skill-integration.md` 属于产品或外部集成说明，不是仓库协作规则真源。
-- `.claude/skills/` 是版本控管的 Skill 唯一真源。使用 `python scripts/sync_agent_skills.py --target claude|codex --apply` 将其中的 `jeac-*` Skills 单向复制到其他 Agent；Codex 目標為 `~/.agents/skills`。`--target plugin --apply` 只會更新網頁版發行用的 `plugins/jeac-research-skills/skills/` 鏡像，CI 必須驗證該鏡像一致；禁止從目標目錄反向同步或手工長期維護鏡像。自订兼容目录使用 `--target directory --destination <skills目录> --apply`。
+- `.claude/skills/` 是版本控管的 Skill 唯一真源。使用 `python scripts/sync_agent_skills.py --target claude|codex --apply` 将其中的 `jeac-*` Skills 单向复制到其他 Agent；Codex 目標為 `~/.agents/skills`。禁止從目標目錄反向同步。自订兼容目录使用 `--target directory --destination <skills目录> --apply`。網頁與行動版一般 ChatGPT 使用 `docs/chatgpt/JEAC_CUSTOM_INSTRUCTIONS.md` 的自訂指令包，不依賴 Plugin。
 - 修改 AI 协作治理资产时，执行：
 
 ```bash

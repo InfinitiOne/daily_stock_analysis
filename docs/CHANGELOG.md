@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
-- [新功能] 新增跨 Agent JEAC Skill 單向同步與網頁版 Plugin bundle；以 `.claude/skills/` 為唯一真源，可預覽、套用、驗證並安全清理過期的腳本管理鏡像。
+- [新功能] 新增跨 Agent JEAC Skill 單向同步與跨裝置 ChatGPT 自訂指令包；以 `.claude/skills/` 為本機 Agent 唯一真源，網頁與行動版一般 ChatGPT 使用可貼入的 JEAC 核心規則。
 - [修复] Alpha Vantage 作为美股最后备援时加入跨工作流的每日 25 次请求预算护栏，达到上限即跳过该源并继续其他来源；名称查询默认关闭以保留预算。
 - [改進] 日報、週報與月報統一由 `JEAC_CURRENT_PORTFOLIO_MARKDOWN` Secret 在 runner 暫存產生 `08-01_Current_Portfolio.md`；不依賴或提交公開 repository 的實際持倉檔。
 - [修復] 每日股票分析改為最新 run 優先、固定 25 分鐘 job 上限，並為 LLM、限流等待與基本面資料源加入日報執行時間護欄，避免單次失效拖住整批分析。

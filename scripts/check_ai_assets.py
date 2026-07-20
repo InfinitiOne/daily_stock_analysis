@@ -36,9 +36,6 @@ REQUIRED_JEAC_SKILL_FILES = {
 }
 
 SKILL_SYNC_SCRIPT = ROOT / "scripts" / "sync_agent_skills.py"
-JEAC_PLUGIN_ROOT = ROOT / "plugins" / "jeac-research-skills"
-JEAC_PLUGIN_MANIFEST = JEAC_PLUGIN_ROOT / ".codex-plugin" / "plugin.json"
-JEAC_MARKETPLACE = ROOT / ".agents" / "plugins" / "marketplace.json"
 
 REQUIRED_GITIGNORE_SNIPPETS = (
     ".claude/*",
@@ -111,21 +108,6 @@ def ensure_skill_sync_script() -> None:
     ensure_file_exists(SKILL_SYNC_SCRIPT, "one-way JEAC skill sync script")
 
 
-def ensure_jeac_plugin_bundle() -> None:
-    ensure_file_exists(JEAC_PLUGIN_MANIFEST, "JEAC plugin manifest")
-    ensure_file_exists(JEAC_MARKETPLACE, "JEAC plugin marketplace")
-    result = subprocess.run(
-        [sys.executable, str(SKILL_SYNC_SCRIPT), "--target", "plugin", "--check"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
-        fail(f"JEAC plugin bundle is not synchronized with .claude/skills: {detail}")
-
-
 def ensure_gitignore_rules() -> None:
     gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
     for snippet in REQUIRED_GITIGNORE_SNIPPETS:
@@ -155,7 +137,6 @@ def main() -> None:
     ensure_instruction_files()
     ensure_skill_files()
     ensure_skill_sync_script()
-    ensure_jeac_plugin_bundle()
     ensure_gitignore_rules()
     ensure_no_tracked_claude_artifacts()
     print("[ai-assets] OK")
