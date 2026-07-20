@@ -37,3 +37,11 @@ def test_corrupt_counter_fails_closed(tmp_path):
     assert result.used == 25
 
 
+def test_environment_limit_cannot_raise_free_plan_cap(monkeypatch, tmp_path):
+    monkeypatch.setenv("ALPHAVANTAGE_MAX_REQUESTS_PER_DAY", "50")
+    monkeypatch.setenv("ALPHAVANTAGE_BUDGET_FILE", str(tmp_path / "usage.json"))
+
+    budget = DailyRequestBudget.from_env()
+
+    assert budget.daily_limit == 25
+
