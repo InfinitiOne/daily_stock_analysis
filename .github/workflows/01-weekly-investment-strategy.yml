@@ -26,6 +26,16 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+      - name: Resolve Taipei report date
+        id: report-date
+        run: echo "value=$(TZ=Asia/Taipei date +%F)" >> "$GITHUB_OUTPUT"
+      - name: Restore same-day analysis state
+        uses: actions/cache/restore@v4
+        with:
+          path: data
+          key: jeac-same-day-weekly-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
+          restore-keys: |
+            jeac-same-day-weekly-${{ steps.report-date.outputs.value }}-
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Load protected current portfolio master
@@ -105,7 +115,15 @@ jobs:
           GOOGLE_DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.GOOGLE_DRIVE_OAUTH_TOKEN_JSON }}
           GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON }}
           JEAC_REPORT_KIND: weekly
+          JEAC_SAME_DAY_REUSE_ENABLED: "true"
+          JEAC_SAME_DAY_REUSE_DATE: ${{ steps.report-date.outputs.value }}
         run: python main.py --force-run
+      - name: Save same-day analysis state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data
+          key: jeac-same-day-weekly-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
       - name: Upload limited diagnostics
         if: always()
         uses: actions/upload-artifact@v6
