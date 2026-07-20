@@ -68,12 +68,18 @@ import sys
 import time
 import uuid
 from datetime import date, datetime, timezone, timedelta
+from types import SimpleNamespace
 
 from src.webui_frontend import prepare_webui_frontend_assets
 from src.config import get_config, Config
 from src.logging_config import setup_logging
 from src.services.stock_list_parser import split_stock_list
 from src.services.stock_code_utils import resolve_index_stock_code_for_analysis
+from src.services.same_day_reuse import (
+    market_payload_is_complete,
+    same_day_reuse_enabled,
+    taipei_date,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -958,6 +964,60 @@ def _private_report_export_enabled() -> bool:
     }
 
 
+def _load_same_day_market_review(
+    *,
+    pipeline: Any,
+    report_kind: str,
+    region: str,
+) -> Optional[Any]:
+    """Load a complete same-day market review and skip duplicate LLM work."""
+    if not same_day_reuse_enabled():
+        return None
+
+    try:
+        row = pipeline.db.get_latest_same_day_analysis_history(
+            code="MARKET",
+            report_type="market_review",
+            report_kind=report_kind,
+            run_date=taipei_date().isoformat(),
+        )
+    except Exception as exc:
+        logger.warning("[same-day-reuse] 大盤快取讀取失敗，改走完整復盤: %s", exc)
+        return None
+    if row is None:
+        return None
+
+    try:
+        snapshot = json.loads(getattr(row, "context_snapshot", None) or "{}")
+        raw_result = json.loads(getattr(row, "raw_result", None) or "{}")
+    except Exception as exc:
+        logger.info("[same-day-reuse] 大盤快取格式無效，重新復盤: %s", exc)
+        return None
+    payload = snapshot.get("market_review_payload") if isinstance(snapshot, dict) else None
+    if not isinstance(payload, dict):
+        return None
+    regions = [part.strip().lower() for part in str(region or "").split(",") if part.strip()]
+    if not market_payload_is_complete(payload, regions):
+        logger.info("[same-day-reuse] 大盤快取缺少核心市場欄位，重新抓取與分析")
+        return None
+
+    report = (
+        payload.get("markdown_report")
+        or raw_result.get("raw_response")
+        or getattr(row, "news_content", None)
+        or getattr(row, "analysis_summary", None)
+    )
+    if not isinstance(report, str) or not report.strip():
+        return None
+    logger.info(
+        "[same-day-reuse] 命中同日完整大盤復盤快取: history_id=%s report_kind=%s run_date=%s；跳過大盤 LLM",
+        getattr(row, "id", "?"),
+        report_kind,
+        taipei_date().isoformat(),
+    )
+    return SimpleNamespace(report=report, market_review_payload=payload)
+
+
 def _results_ready_for_private_export(results: List[Any]) -> bool:
     """Return true only when every requested stock has a usable completed result."""
     return bool(results) and all(
@@ -1236,32 +1296,44 @@ def run_full_analysis(
                 or getattr(config, 'schedule_enabled', False)
             )
             review_trigger_source = "schedule" if schedule_mode else "cli"
-            can_reuse_market_context = (
-                _can_reuse_market_context_for_review(
-                    market_context_summary,
-                    market_review_region,
-                )
-                if should_use_daily_market_context
-                else False
+            review_result = _load_same_day_market_review(
+                pipeline=pipeline,
+                report_kind=report_kind,
+                region=market_review_region,
             )
+            if review_result is not None:
+                market_report = _market_review_report_text(review_result)
+                can_skip_market_review = True
+                can_reuse_market_context = False
+            else:
+                can_reuse_market_context = (
+                    _can_reuse_market_context_for_review(
+                        market_context_summary,
+                        market_review_region,
+                    )
+                    if should_use_daily_market_context
+                    else False
+                )
 
-            can_skip_market_review = (
-                (merge_notification or market_context_generated_during_stock)
-                and can_reuse_market_context
-                and bool(market_context_full_report or market_context_summary)
-            )
+                can_skip_market_review = (
+                    (merge_notification or market_context_generated_during_stock)
+                    and can_reuse_market_context
+                    and bool(market_context_full_report or market_context_summary)
+                )
+
             if can_skip_market_review:
-                market_report = market_context_full_report or market_context_summary
-                logger.info(
-                    "复盘上下文可复用，跳过重复大盘复盘并复用上下文内容。"
-                )
-                _save_reused_market_review_report(
-                    pipeline.notifier,
-                    market_report,
-                    config=config,
-                    trigger_source=review_trigger_source,
-                    region=market_review_region,
-                )
+                if review_result is None:
+                    market_report = market_context_full_report or market_context_summary
+                    logger.info(
+                        "复盘上下文可复用，跳过重复大盘复盘并复用上下文內容。"
+                    )
+                    _save_reused_market_review_report(
+                        pipeline.notifier,
+                        market_report,
+                        config=config,
+                        trigger_source=review_trigger_source,
+                        region=market_review_region,
+                    )
                 if (
                     market_context_generated_during_stock
                     and not merge_notification
@@ -1277,7 +1349,6 @@ def run_full_analysis(
                     else:
                         logger.warning("复用本轮大盘上下文推送大盘复盘失败")
 
-            review_result = None
             if not can_skip_market_review:
                 if analysis_delay > 0:
                     logger.info(f"等待 {analysis_delay} 秒后执行大盘复盘（避免API限流）...")
