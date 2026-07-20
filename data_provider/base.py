@@ -2533,8 +2533,25 @@ class DataFetcherManager:
         # are China-market sources, reject .TW/.TWO codes, and their retries
         # can add minutes to a weekly report without improving the result.
         if _market_tag(stock_code) == "tw":
+            # The bundled/remote autocomplete index does not cover Taiwan
+            # symbols.  Resolve their display names from the official TWSE/TPEx
+            # end-of-day endpoint before falling back to an English Yahoo name.
+            for fetcher in self._get_fetchers_snapshot():
+                if fetcher.name != "TwseTpexFetcher" or not hasattr(fetcher, "get_stock_name"):
+                    continue
+                try:
+                    name = self._call_fetcher_method(fetcher, "get_stock_name", stock_code)
+                    if is_meaningful_stock_name(name, stock_code):
+                        name = str(name).strip()
+                        self._cache_stock_name(stock_code, name)
+                        logger.info("[股票名稱] 台股官方名稱: %s -> %s", stock_code, name)
+                        return name
+                except Exception as exc:
+                    logger.warning("[股票名稱] 台股官方名稱取得失敗 %s: %s", stock_code, exc)
+                    break
+
             logger.info(
-                "[股票名稱] 台股 %s 未於本地索引或即時行情取得名稱；略過非台股資料源",
+                "[股票名稱] 台股 %s 未於本地索引或官方行情取得名稱；略過非台股資料源",
                 stock_code,
             )
             return ""
