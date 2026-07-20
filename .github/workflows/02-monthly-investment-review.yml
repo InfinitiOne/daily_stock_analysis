@@ -14,7 +14,9 @@ on:
         type: boolean
 
 concurrency:
-  group: jeac-monthly-analysis
+  # Share a lock with daily/weekly jobs while the Alpha Vantage budget is
+  # restored and saved.
+  group: jeac-provider-budget
   cancel-in-progress: false
 
 jobs:
@@ -37,6 +39,13 @@ jobs:
           key: jeac-same-day-monthly-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
           restore-keys: |
             jeac-same-day-monthly-${{ steps.report-date.outputs.value }}-
+      - name: Restore Alpha Vantage daily budget
+        uses: actions/cache/restore@v4
+        with:
+          path: provider_budget
+          key: jeac-provider-budget-alphavantage-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
+          restore-keys: |
+            jeac-provider-budget-alphavantage-${{ steps.report-date.outputs.value }}-
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Load protected current portfolio master
@@ -91,6 +100,10 @@ jobs:
           FINMIND_API_TOKEN: ${{ secrets.FINMIND_API_TOKEN }}
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
+          ALPHAVANTAGE_MAX_REQUESTS_PER_DAY: ${{ vars.ALPHAVANTAGE_MAX_REQUESTS_PER_DAY || '25' }}
+          ALPHAVANTAGE_BUDGET_FILE: provider_budget/alphavantage.json
+          ALPHAVANTAGE_BUDGET_TIMEZONE: ${{ vars.ALPHAVANTAGE_BUDGET_TIMEZONE || 'UTC' }}
+          ALPHAVANTAGE_NAME_LOOKUP_ENABLED: ${{ vars.ALPHAVANTAGE_NAME_LOOKUP_ENABLED || 'false' }}
           BOCHA_API_KEYS: ${{ secrets.BOCHA_API_KEYS }}
           TAVILY_API_KEYS: ${{ secrets.TAVILY_API_KEYS }}
           SERPAPI_API_KEYS: ${{ secrets.SERPAPI_API_KEYS }}
@@ -132,6 +145,12 @@ jobs:
         with:
           path: data
           key: jeac-same-day-monthly-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
+      - name: Save Alpha Vantage daily budget
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: provider_budget
+          key: jeac-provider-budget-alphavantage-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
       - name: Upload limited diagnostics
         if: always()
         uses: actions/upload-artifact@v6
@@ -142,3 +161,4 @@ jobs:
           path: logs/
           retention-days: 14
           if-no-files-found: warn
+
