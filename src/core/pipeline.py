@@ -11,6 +11,7 @@ A股自选股智能分析系统 - 核心分析流水线
 4. 提供股票分析的核心功能
 """
 
+import json
 import logging
 import os
 import threading
@@ -92,6 +93,13 @@ from src.core.trading_calendar import (
 )
 from data_provider.us_index_mapping import is_us_stock_code
 from bot.models import BotMessage
+from src.services.same_day_reuse import (
+    analysis_payload_is_complete,
+    cache_marker,
+    report_kind as same_day_report_kind,
+    same_day_reuse_enabled,
+    taipei_date,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -2812,6 +2820,12 @@ class StockAnalysisPipeline:
             "news_content": news_content,
             "realtime_quote_raw": self._safe_to_dict(realtime_quote),
             "chip_distribution_raw": self._safe_to_dict(chip_data),
+            # Scope reusable state explicitly by Taipei date and workflow kind
+            # instead of inferring a date from a UTC-naive DB timestamp.
+            "same_day_reuse": cache_marker(
+                kind=same_day_report_kind(),
+                portfolio_context=self.portfolio_context,
+            ),
         }
         market_structure_context = enhanced_context.get("market_structure_context")
         if isinstance(market_structure_context, dict):
@@ -2830,6 +2844,84 @@ class StockAnalysisPipeline:
         if self.analysis_skills is not None:
             snapshot["skills"] = list(self.analysis_skills)
         return snapshot
+
+    def _try_reuse_same_day_analysis(
+        self,
+        *,
+        code: str,
+        report_type: ReportType,
+        query_id: str,
+    ) -> Optional[AnalysisResult]:
+        """Restore a complete same-day result without fetching or calling LLM."""
+        if not same_day_reuse_enabled():
+            return None
+
+        report_type_value = getattr(report_type, "value", str(report_type))
+        try:
+            row = self.db.get_latest_same_day_analysis_history(
+                code=code,
+                report_type=report_type_value,
+                report_kind=same_day_report_kind(),
+                run_date=taipei_date().isoformat(),
+            )
+        except Exception as exc:
+            logger.warning("[%s] 同日分析快取讀取失敗，改走完整流程: %s", code, exc)
+            return None
+
+        if row is None:
+            logger.info("[%s] 同日分析快取未命中，執行資料抓取與分析", code)
+            return None
+
+        try:
+            payload = json.loads(getattr(row, "raw_result", None) or "{}")
+            snapshot = json.loads(getattr(row, "context_snapshot", None) or "{}")
+        except Exception as exc:
+            logger.info("[%s] 同日分析快取格式無效，重新抓取: %s", code, exc)
+            return None
+
+        if not analysis_payload_is_complete(payload, snapshot):
+            logger.info("[%s] 同日分析快取缺欄位或含失敗狀態，重新抓取缺失資料", code)
+            return None
+        marker = snapshot.get("same_day_reuse") if isinstance(snapshot, dict) else None
+        expected_marker = cache_marker(
+            kind=same_day_report_kind(),
+            portfolio_context=getattr(self, "portfolio_context", None),
+        )
+        if not isinstance(marker, dict) or marker.get("portfolio_fingerprint") != expected_marker.get("portfolio_fingerprint"):
+            logger.info("[%s] 同日分析快取的持倉輸入已變更，重新分析", code)
+            return None
+
+        allowed_fields = set(getattr(AnalysisResult, "__dataclass_fields__", {}))
+        values = {
+            field: value
+            for field, value in payload.items()
+            if field in allowed_fields
+        }
+        try:
+            result = AnalysisResult(**values)
+        except Exception as exc:
+            logger.info("[%s] 同日分析快取無法還原，重新分析: %s", code, exc)
+            return None
+
+        result.query_id = query_id
+        result.diagnostic_context_snapshot = snapshot
+        enhanced_context = snapshot.get("enhanced_context") if isinstance(snapshot, dict) else {}
+        if isinstance(enhanced_context, dict):
+            if isinstance(enhanced_context.get("fundamental_context"), dict):
+                result.fundamental_context = enhanced_context["fundamental_context"]
+            if isinstance(enhanced_context.get("market_structure_context"), dict):
+                result.market_structure_context = enhanced_context["market_structure_context"]
+        evidence = dict(getattr(result, "technical_evidence", {}) or {})
+        evidence["same_day_reuse"] = True
+        result.technical_evidence = evidence
+        logger.info(
+            "[%s] 命中同日完整分析快取: history_id=%s report_kind=%s run_date=%s；跳過資料抓取與 LLM",
+            code,
+            getattr(row, "id", "?"),
+            same_day_report_kind(),
+            taipei_date().isoformat(),
+        )
+        return result
 
     def _extract_decision_signal_after_history_save(
         self,
@@ -3272,6 +3364,21 @@ class StockAnalysisPipeline:
         try:
             llm_analysis_started = False
             self._emit_progress(12, f"{code}：正在准备分析任务")
+            if not skip_analysis:
+                cached_result = self._try_reuse_same_day_analysis(
+                    code=code,
+                    report_type=report_type,
+                    query_id=effective_query_id,
+                )
+                if cached_result is not None:
+                    if single_stock_notify:
+                        self._send_single_stock_notification(
+                            cached_result,
+                            report_type=report_type,
+                            fallback_code=code,
+                        )
+                    return self._attach_daily_source_trace(cached_result, code)
+
             # Step 1: 获取并保存数据
             success, error = self.fetch_and_save_stock_data(
                 code, current_time=current_time
