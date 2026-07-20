@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 - [修复] Alpha Vantage 作为美股最后备援时加入跨工作流的每日 25 次请求预算护栏，达到上限即跳过该源并继续其他来源；名称查询默认关闭以保留预算。
-- [改进] 日報、週報與月報可直接使用 repository 內的 `08-01_Current_Portfolio.md`，不再強制要求 `JEAC_CURRENT_PORTFOLIO_MARKDOWN` Secret；實際持倉檔仍不得在公開 repository 中提交。
+- [改進] 日報、週報與月報統一由 `JEAC_CURRENT_PORTFOLIO_MARKDOWN` Secret 在 runner 暫存產生 `08-01_Current_Portfolio.md`；不依賴或提交公開 repository 的實際持倉檔。
 - [修復] 每日股票分析改為最新 run 優先、固定 25 分鐘 job 上限，並為 LLM、限流等待與基本面資料源加入日報執行時間護欄，避免單次失效拖住整批分析。
 - [修復] 新上市 ETF 日線有效但不足 252 根時，仍產出短期均線、量價、MACD、RSI 與規則化趨勢分析；僅將 SEPA、Stage 2、VCP、Pivot 標示為歷史不足而暫停。
 - [修復] 週報將新上市 ETF 的有效但不足日線歷史標示為長週期技術暫停，不再阻斷整份私有文件；LLM JSON 格式失敗時保留規則化技術資料。
