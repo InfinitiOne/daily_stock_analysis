@@ -115,7 +115,7 @@ jobs:
           GOOGLE_DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.GOOGLE_DRIVE_OAUTH_TOKEN_JSON }}
           GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON }}
           JEAC_REPORT_KIND: weekly
-          JEAC_SAME_DAY_REUSE_ENABLED: "true"
+          JEAC_SAME_DAY_REUSE_ENABLED: ${{ vars.JEAC_SAME_DAY_REUSE_ENABLED || 'true' }}
           JEAC_SAME_DAY_REUSE_DATE: ${{ steps.report-date.outputs.value }}
         run: python main.py --force-run
       - name: Save same-day analysis state
