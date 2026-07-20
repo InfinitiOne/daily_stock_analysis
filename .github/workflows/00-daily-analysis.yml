@@ -25,10 +25,10 @@ on:
 
 # 并发控制：同一时间只运行一个分析任务
 concurrency:
-  group: stock-analysis
-  # Keep only the latest requested daily analysis.  A stale queued run is
-  # less useful than a fresh report and previously could wait indefinitely.
-  cancel-in-progress: true
+  # Serialize all JEAC report jobs so the Alpha Vantage daily budget counter
+  # cannot be updated concurrently by daily/weekly/monthly runs.
+  group: jeac-provider-budget
+  cancel-in-progress: false
 
 jobs:
   analyze:
@@ -60,6 +60,14 @@ jobs:
           key: jeac-same-day-daily-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
           restore-keys: |
             jeac-same-day-daily-${{ steps.report-date.outputs.value }}-
+
+      - name: 還原 Alpha Vantage 每日預算
+        uses: actions/cache/restore@v4
+        with:
+          path: provider_budget
+          key: jeac-provider-budget-alphavantage-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
+          restore-keys: |
+            jeac-provider-budget-alphavantage-${{ steps.report-date.outputs.value }}-
       
       - name: 安装依赖
         run: |
@@ -79,7 +87,7 @@ jobs:
       
       - name: 创建必要目录
         run: |
-          mkdir -p data logs reports
+          mkdir -p data logs reports provider_budget
       
       - name: 执行股票分析
         env:
@@ -325,6 +333,10 @@ jobs:
           # no-key Nasdaq/FRED public-web route is still attempted.
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
           ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
+          ALPHAVANTAGE_MAX_REQUESTS_PER_DAY: ${{ vars.ALPHAVANTAGE_MAX_REQUESTS_PER_DAY || '25' }}
+          ALPHAVANTAGE_BUDGET_FILE: provider_budget/alphavantage.json
+          ALPHAVANTAGE_BUDGET_TIMEZONE: ${{ vars.ALPHAVANTAGE_BUDGET_TIMEZONE || 'UTC' }}
+          ALPHAVANTAGE_NAME_LOOKUP_ENABLED: ${{ vars.ALPHAVANTAGE_NAME_LOOKUP_ENABLED || 'false' }}
           # Longbridge OpenAPI（美股/港股实时行情字段补充；不设则仅 YFinance/AkShare，无 [Longbridge] 调用）
           LONGBRIDGE_OAUTH_CLIENT_ID: ${{ vars.LONGBRIDGE_OAUTH_CLIENT_ID || secrets.LONGBRIDGE_OAUTH_CLIENT_ID }}
           LONGBRIDGE_OAUTH_TOKEN_CACHE_B64: ${{ secrets.LONGBRIDGE_OAUTH_TOKEN_CACHE_B64 }}
@@ -603,6 +615,13 @@ jobs:
         with:
           path: data
           key: jeac-same-day-daily-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
+
+      - name: 保存 Alpha Vantage 每日預算
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: provider_budget
+          key: jeac-provider-budget-alphavantage-${{ steps.report-date.outputs.value }}-${{ github.run_id }}
       
       - name: 上传受限诊断信息
         uses: actions/upload-artifact@v6
@@ -621,3 +640,4 @@ jobs:
           echo "分析作业已结束。"
           echo "正式报告仅会上传至配置的私人 Google Drive；GitHub 不显示或列出报告文件。"
           echo "如需排错，请由具权限的维护者查看受限诊断 artifact。"
+
