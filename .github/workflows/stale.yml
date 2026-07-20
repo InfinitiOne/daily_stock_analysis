@@ -1,5 +1,4 @@
-# 自动关闭过期的 Issues 和 PR
-# 每天检查一次，标记长时间无响应的 issues/PRs
+# 手動標記或關閉過期的 Issue 與 PR（已停用排程）
 
 name: Stale Issues & PRs
 
