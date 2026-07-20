@@ -465,7 +465,7 @@ jobs:
           GOOGLE_DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.GOOGLE_DRIVE_OAUTH_TOKEN_JSON }}
           GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON }}
           JEAC_REPORT_KIND: daily
-          JEAC_SAME_DAY_REUSE_ENABLED: "true"
+          JEAC_SAME_DAY_REUSE_ENABLED: ${{ vars.JEAC_SAME_DAY_REUSE_ENABLED || 'true' }}
           JEAC_SAME_DAY_REUSE_DATE: ${{ steps.report-date.outputs.value }}
           # 所有對使用者的日報、DOCX 與 PPTX 均輸出臺灣繁體中文。
           REPORT_LANGUAGE: "zh-TW"
