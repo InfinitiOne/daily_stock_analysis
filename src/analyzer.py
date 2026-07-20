@@ -55,6 +55,10 @@ from src.llm.errors import (
     call_litellm_with_rate_limit_recovery,
     is_litellm_rate_limit_error,
 )
+from src.llm.openrouter_budget import (
+    get_openrouter_request_budget,
+    is_openrouter_route,
+)
 from src.llm.backend_registry import (
     LOCAL_CLI_GENERATION_BACKEND_IDS,
     LITELLM_BACKEND_ID,
@@ -3401,6 +3405,7 @@ JSON 鍵名保持英文；decision_type 只能為 buy|hold|sell；{language_rule
         router_model_names = set(get_configured_llm_models(config.llm_model_list))
         rate_limit_max_retries = self._get_llm_rate_limit_max_retries()
         rate_limit_max_wait_seconds = self._get_llm_rate_limit_max_wait_seconds()
+        openrouter_budget = get_openrouter_request_budget()
         for model in models_to_try:
             origins = route_deployment_origins(config.llm_model_list, model)
             model_stream = bool(stream and not origins.has_hermes)
@@ -3409,6 +3414,17 @@ JSON 鍵名保持英文；decision_type 只能為 buy|hold|sell；{language_rule
             if legacy_router_model_list and model == config.litellm_model and not use_channel_router:
                 recovery_model_list = legacy_router_model_list
             usage_model, usage_provider = resolved_model_provider_identity(model, recovery_model_list)
+
+            if is_openrouter_route(model, usage_provider, recovery_model_list):
+                if not openrouter_budget.reserve():
+                    logger.warning(
+                        "[LiteLLM] OpenRouter request budget exhausted (%d/%d); "
+                        "skipping fallback and preserving deterministic JEAC output",
+                        openrouter_budget.used,
+                        openrouter_budget.run_budget,
+                    )
+                    last_error = RuntimeError("OpenRouter request budget exhausted")
+                    continue
 
             try:
                 def _attach_usage_audit(
