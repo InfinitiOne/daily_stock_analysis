@@ -2,8 +2,8 @@ name: JEAC Weekly Investment Strategy
 
 on:
   schedule:
-    # Saturday 11:15 Asia/Taipei = Saturday 03:15 UTC.
-    - cron: "15 3 * * 6"
+    # Saturday 11:00 Asia/Taipei = Saturday 03:00 UTC.
+    - cron: "0 3 * * 6"
   workflow_dispatch:
     inputs:
       force_run:
