@@ -49,7 +49,7 @@ class FugleFetcher(BaseFetcher):
     """Fetch daily candles and intraday quotes from Fugle Market Data."""
 
     name = "FugleFetcher"
-    priority = 0
+    # FinMind is the default daily-bar provider for scheduled JEAC reports.\n    # Fugle remains available for intraday quotes and as a later OHLCV fallback.\n    priority = 8
 
     def __init__(
         self,
@@ -58,7 +58,7 @@ class FugleFetcher(BaseFetcher):
         session: Optional[requests.Session] = None,
     ) -> None:
         self._api_key = (api_key if api_key is not None else os.getenv("FUGLE_API_KEY", "")).strip()
-        self.priority = int(priority if priority is not None else _env_number("FUGLE_PRIORITY", 0))
+        self.priority = int(priority if priority is not None else _env_number("FUGLE_PRIORITY", 8))
         self._timeout_seconds = max(1.0, _env_number("FUGLE_TIMEOUT_SECONDS", 12.0))
         # Authentication or subscription-plan denials cannot recover within
         # one workflow run.  Suppress repeat requests and let FinMind/TWSE
