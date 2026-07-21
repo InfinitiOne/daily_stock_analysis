@@ -2,8 +2,8 @@ name: JEAC Weekly Investment Strategy
 
 on:
   schedule:
-    # Saturday 10:00 Asia/Taipei = Saturday 02:00 UTC.
-    - cron: "0 2 * * 6"
+    # Saturday 11:00 Asia/Taipei = Saturday 03:00 UTC.
+    - cron: "0 3 * * 6"
   workflow_dispatch:
     inputs:
       force_run:
@@ -148,10 +148,9 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          # Never upload reports/: completed DOCX/PPTX files live only in
+          # Never upload reports/: completed DOCX files live only in
           # the private Google Drive folder.
           name: jeac-weekly-diagnostics-${{ github.run_number }}
           path: logs/
           retention-days: 7
           if-no-files-found: warn
-

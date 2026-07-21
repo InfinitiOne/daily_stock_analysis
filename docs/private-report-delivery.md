@@ -60,11 +60,11 @@ storage arrangement where the Service Account has quota.
 ## Export policy
 
 - Daily: DOCX
-- Weekly: DOCX and PPTX
-- Monthly: DOCX and PPTX
+- Weekly: DOCX
+- Monthly: DOCX
 - Export happens only after all required stock data and the market section pass
   integrity checks.
-- Missing core data or an LLM 429 response produces no DOCX/PPTX.
+- Missing core data or an LLM 429 response produces no DOCX.
 - GitHub Actions uploads only limited diagnostics under `logs/`; it never
   uploads `reports/`.
 
@@ -73,7 +73,5 @@ storage arrangement where the Service Account has quota.
 ```text
 Daily/JEAC_Daily_YYYY-MM-DD.docx
 Weekly/JEAC_Weekly_YYYY-MM-DD.docx
-Weekly/JEAC_Weekly_YYYY-MM-DD.pptx
 Monthly/JEAC_Monthly_YYYY-MM.docx
-Monthly/JEAC_Monthly_YYYY-MM.pptx
 ```
