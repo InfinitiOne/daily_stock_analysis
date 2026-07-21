@@ -33,7 +33,7 @@ def test_disabled_delivery_does_not_create_documents(tmp_path: Path) -> None:
     assert list(tmp_path.iterdir()) == []
 
 
-def test_weekly_delivery_creates_docx_and_pptx_before_private_upload(
+def test_weekly_delivery_creates_docx_only_before_private_upload(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -67,13 +67,12 @@ def test_weekly_delivery_creates_docx_and_pptx_before_private_upload(
         report_date=datetime(2026, 7, 19, tzinfo=timezone.utc),
     )
 
-    assert [item.format for item in delivered] == ["docx", "pptx"]
+    assert [item.format for item in delivered] == ["docx"]
     assert uploaded == [
         ("JEAC_Weekly_2026-07-19.docx", "docx"),
-        ("JEAC_Weekly_2026-07-19.pptx", "pptx"),
     ]
     assert (tmp_path / "JEAC_Weekly_2026-07-19.docx").exists()
-    assert (tmp_path / "JEAC_Weekly_2026-07-19.pptx").exists()
+    assert not (tmp_path / "JEAC_Weekly_2026-07-19.pptx").exists()
 
 
 def test_daily_delivery_creates_only_docx(tmp_path: Path, monkeypatch) -> None:

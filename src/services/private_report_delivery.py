@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Private DOCX/PPTX delivery for completed JEAC reports.
+"""Private DOCX delivery for completed JEAC reports.
 
 The public repository never receives the generated documents.  A GitHub Actions
 runner creates them in a temporary directory, then uploads them only to the
@@ -102,7 +102,7 @@ class PrivateReportDelivery:
         markdown: str,
         report_date: Optional[datetime] = None,
     ) -> List[DeliveredReport]:
-        """Create DOCX and, for weekly/monthly, PPTX only after integrity passes."""
+        """Create and privately upload a DOCX only after integrity passes."""
         if not self.enabled:
             logger.info("[private-report] export disabled")
             return []
@@ -131,11 +131,10 @@ class PrivateReportDelivery:
             docx_path = directory / f"{base_name}.docx"
             self._create_docx(docx_path, title=title, markdown=markdown, generated_at=moment)
 
+            # JEAC private delivery is intentionally DOCX-only.  A single
+            # canonical file avoids duplicate Drive documents and ensures the
+            # daily, weekly, and monthly reports use the same delivery rule.
             uploads = [(docx_path, "docx")]
-            if kind in {"weekly", "monthly"}:
-                pptx_path = directory / f"{base_name}.pptx"
-                self._create_pptx(pptx_path, title=title, markdown=markdown, generated_at=moment)
-                uploads.append((pptx_path, "pptx"))
 
             drive = self._build_drive_client()
             kind_folder = self._ensure_folder(drive, self.folder_id, kind.title())
@@ -251,89 +250,6 @@ class PrivateReportDelivery:
             for column_index, value in enumerate(row_values):
                 cells[column_index].text = value
         document.add_paragraph("")
-
-    @staticmethod
-    def _create_pptx(path: Path, *, title: str, markdown: str, generated_at: datetime) -> None:
-        try:
-            from pptx import Presentation
-            from pptx.dml.color import RGBColor
-            from pptx.enum.text import PP_ALIGN
-            from pptx.util import Inches, Pt
-        except ImportError as exc:  # pragma: no cover - exercised in deployment checks
-            raise PrivateReportDeliveryError("python-pptx is not installed") from exc
-
-        presentation = Presentation()
-        presentation.slide_width = Inches(13.333)
-        presentation.slide_height = Inches(7.5)
-
-        title_slide = presentation.slides.add_slide(presentation.slide_layouts[6])
-        title_box = title_slide.shapes.add_textbox(Inches(0.9), Inches(1.6), Inches(11.5), Inches(1.0))
-        title_frame = title_box.text_frame
-        title_frame.text = title
-        title_paragraph = title_frame.paragraphs[0]
-        title_paragraph.font.name = "Microsoft JhengHei"
-        title_paragraph.font.size = Pt(38)
-        title_paragraph.font.bold = True
-        title_paragraph.font.color.rgb = RGBColor(31, 78, 121)
-        title_paragraph.alignment = PP_ALIGN.CENTER
-
-        date_box = title_slide.shapes.add_textbox(Inches(1.0), Inches(3.0), Inches(11.3), Inches(0.5))
-        date_frame = date_box.text_frame
-        date_frame.text = f"資料完整性通過後產生｜{generated_at.strftime('%Y-%m-%d %H:%M')}（Asia/Taipei）"
-        date_paragraph = date_frame.paragraphs[0]
-        date_paragraph.font.name = "Microsoft JhengHei"
-        date_paragraph.font.size = Pt(16)
-        date_paragraph.alignment = PP_ALIGN.CENTER
-
-        for section_title, section_lines in PrivateReportDelivery._markdown_sections(markdown)[:7]:
-            slide = presentation.slides.add_slide(presentation.slide_layouts[6])
-            banner = slide.shapes.add_textbox(Inches(0.6), Inches(0.4), Inches(12.1), Inches(0.65))
-            banner_frame = banner.text_frame
-            banner_frame.text = section_title
-            banner_paragraph = banner_frame.paragraphs[0]
-            banner_paragraph.font.name = "Microsoft JhengHei"
-            banner_paragraph.font.size = Pt(28)
-            banner_paragraph.font.bold = True
-            banner_paragraph.font.color.rgb = RGBColor(31, 78, 121)
-
-            body = slide.shapes.add_textbox(Inches(0.8), Inches(1.35), Inches(11.8), Inches(5.5))
-            frame = body.text_frame
-            frame.clear()
-            frame.word_wrap = True
-            for line_number, line in enumerate(section_lines[:10]):
-                paragraph = frame.paragraphs[0] if line_number == 0 else frame.add_paragraph()
-                paragraph.text = line
-                paragraph.level = 0
-                paragraph.font.name = "Microsoft JhengHei"
-                paragraph.font.size = Pt(19)
-                paragraph.space_after = Pt(9)
-        presentation.save(path)
-
-    @staticmethod
-    def _markdown_sections(markdown: str) -> List[tuple[str, List[str]]]:
-        sections: List[tuple[str, List[str]]] = []
-        current_title = "投資策略摘要"
-        current_lines: List[str] = []
-        for raw in markdown.splitlines():
-            line = raw.strip()
-            heading = re.match(r"^#{1,3}\s+(.+)$", line)
-            if heading:
-                if current_lines:
-                    sections.append((current_title, current_lines))
-                current_title = _markdown_text(heading.group(1))
-                current_lines = []
-                continue
-            if not line or line == "---":
-                continue
-            if line.startswith("|"):
-                cells = [_markdown_text(cell) for cell in line.strip("|").split("|")]
-                if not all(re.fullmatch(r"\s*:?-{3,}:?\s*", cell) for cell in cells):
-                    current_lines.append("｜".join(cells))
-                continue
-            current_lines.append(_markdown_text(re.sub(r"^[-*+]\s+", "", line)))
-        if current_lines:
-            sections.append((current_title, current_lines))
-        return sections or [("投資策略摘要", ["報告未提供可轉換的內容。"])]
 
     def _validate_configuration(self) -> None:
         if not self.folder_id:

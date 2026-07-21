@@ -115,7 +115,7 @@ jobs:
           SEARXNG_PUBLIC_INSTANCES_ENABLED: ${{ vars.SEARXNG_PUBLIC_INSTANCES_ENABLED || secrets.SEARXNG_PUBLIC_INSTANCES_ENABLED || 'false' }}
           NEWS_INTEL_AUTO_FETCH_ENABLED: ${{ vars.NEWS_INTEL_AUTO_FETCH_ENABLED || 'true' }}
 
-          # Private document delivery.  The Markdown, DOCX and PPTX stay out
+          # Private document delivery.  The Markdown and DOCX stay out
           # of public artifacts and are uploaded only to this Drive folder.
           PRIVATE_REPORT_EXPORT_ENABLED: ${{ vars.PRIVATE_REPORT_EXPORT_ENABLED || 'false' }}
           GOOGLE_DRIVE_REPORT_FOLDER_ID: ${{ vars.GOOGLE_DRIVE_REPORT_FOLDER_ID }}
@@ -163,4 +163,3 @@ jobs:
           path: logs/
           retention-days: 14
           if-no-files-found: warn
-

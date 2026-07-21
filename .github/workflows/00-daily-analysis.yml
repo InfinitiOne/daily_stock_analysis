@@ -1,9 +1,9 @@
 name: 每日股票分析
 
 on:
-  # 定時觸發－每個工作日台灣時間 08:00（UTC 00:00）
+  # 定時觸發－每個工作日台灣時間 08:15（UTC 00:15）
   schedule:
-    - cron: '0 0 * * 1-5'      # 週一至週五，UTC 00:00 = Asia/Taipei 08:00
+    - cron: '15 0 * * 1-5'     # 週一至週五，UTC 00:15 = Asia/Taipei 08:15
   
   # 手动触发
   workflow_dispatch:
@@ -640,4 +640,3 @@ jobs:
           echo "分析作业已结束。"
           echo "正式报告仅会上传至配置的私人 Google Drive；GitHub 不显示或列出报告文件。"
           echo "如需排错，请由具权限的维护者查看受限诊断 artifact。"
-
